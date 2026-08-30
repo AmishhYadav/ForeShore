@@ -1,0 +1,24 @@
+# Claude Code
+.CLAUDE.md.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Data
+data/cache/
+*.nc
+!data/fixtures/**/*.nc
+
+# OS
+.DS_Store
