@@ -1,0 +1,43 @@
+[project]
+name = "foreshore"
+version = "0.1.0"
+description = "Agentic marine intelligence for the small-boat fleet — SIH26176 ORCA"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "xarray>=2024.6",
+    "netCDF4>=1.7",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "websockets>=12",
+    "anthropic>=0.40",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    "python-dateutil>=2.9",
+    "orjson>=3.10",
+    "pydantic>=2.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "respx>=0.21", "ruff>=0.5"]
+postgis = ["psycopg[binary]>=3.2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/foreshore"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

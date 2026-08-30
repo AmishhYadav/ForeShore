@@ -1,0 +1,56 @@
+region_id: gujarat_sir_creek
+display_name_en: Sir Creek & Gulf of Kutch
+display_name_local: સર ક્રીક અને કચ્છનો અખાત
+bbox: [68.0, 21.8, 71.5, 24.2]
+timezone: Asia/Kolkata
+primary_language: gu
+fallback_language: en
+languages: [gu, en]
+
+anchor_ports:
+  - name: Okha
+    lat: 22.4707
+    lon: 69.0708
+    district: Devbhumi Dwarka
+  - name: Porbandar
+    lat: 21.6417
+    lon: 69.6293
+    district: Porbandar
+  - name: Jakhau
+    lat: 23.2200
+    lon: 68.7100
+    district: Kachchh
+
+districts: [Kachchh, Devbhumi Dwarka, Jamnagar, Porbandar, Morbi]
+
+sources:
+  imd_coastal_office_id: 1              # CWC Mumbai — governs the Gujarat coast
+  imd_bulletin_coast_block: "North Gujarat coast"
+  imd_bulletin_fallback_blocks: ["South Gujarat coast", "Gujarat coast"]
+  incois_pfz_sector: SEC001
+  incois_hab_sector: "Gulf of Kutch (GoK)"
+  imbl_line_filter: "%Pakistan%"
+  imbl_historic_waters_line_ids: []
+  imbl_maritime_boundary_line_ids: []
+
+coast_guard:
+  name: Indian Coast Guard — Maritime Rescue
+  contact: "1554"
+
+geofences:
+  mpa:
+    - id: gok_marine_national_park
+      name_en: Gulf of Kutch Marine National Park
+      name_local: કચ્છનો અખાત દરિયાઈ રાષ્ટ્રીય ઉદ્યાન
+      source_file: mpa_gulf_of_kutch.geojson
+
+routing:
+  grid_deg: 0.01
+  min_depth_m: 3.0
+
+basemap:
+  wms_url: "https://bhuvan-vec1.nrsc.gov.in/bhuvan/wms"
+  layer: "india3"
+  attribution: "ISRO / NRSC Bhuvan"
+  center: [22.6, 69.3]
+  zoom: 8

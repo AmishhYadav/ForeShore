@@ -1,0 +1,94 @@
+# Vessel class thresholds. Safety-critical: these and only these decide how a Douglas
+# sea-state band maps to the most permissive verdict a class may receive.
+#
+# max_verdict_for_band is read by verdict/ceiling.py. Bands are Douglas numbers.
+#   2 SMOOTH  3 SLIGHT  4 MODERATE  5 ROUGH  6 VERY ROUGH  7 HIGH  8 VERY HIGH  9 PHENOMENAL
+# Anything not listed for a class falls through to DO_NOT_ADVISE.
+
+default_class: small_motorised
+
+classes:
+  small_motorised:
+    label_en: Small motorised boat (0-50 nm, FRP/OBM)
+    label_local: சிறிய இயந்திரப் படகு
+    range_nm: 50
+    loa_m: 9.0
+    cruise_speed_kn: 7.0
+    max_speed_kn: 12.0
+    min_depth_m: 1.2
+    crew_typical: 4
+    max_verdict_for_band:
+      2: GO                 # SMOOTH
+      3: GO                 # SLIGHT
+      4: GO_WITH_CAUTION    # MODERATE
+      5: DO_NOT_ADVISE      # ROUGH and above
+      6: DO_NOT_ADVISE
+      7: DO_NOT_ADVISE
+      8: DO_NOT_ADVISE
+      9: DO_NOT_ADVISE
+    limits:
+      hs_go_m: 1.25
+      hs_caution_m: 2.5
+      wind_go_kn: 15
+      wind_caution_kn: 22
+      gust_caution_kn: 28
+      # Short-period steep sea is the real small-boat killer, not height alone.
+      steepness_caution: 0.045
+      visibility_caution_m: 2000
+      long_period_swell_s: 15.0
+
+  fibreglass_catamaran:
+    label_en: Vallam / fibreglass catamaran (0-12 nm, inshore)
+    label_local: வள்ளம்
+    range_nm: 12
+    loa_m: 6.0
+    cruise_speed_kn: 5.0
+    max_speed_kn: 8.0
+    min_depth_m: 0.8
+    crew_typical: 3
+    max_verdict_for_band:
+      2: GO
+      3: GO_WITH_CAUTION
+      4: DO_NOT_ADVISE
+      5: DO_NOT_ADVISE
+      6: DO_NOT_ADVISE
+      7: DO_NOT_ADVISE
+      8: DO_NOT_ADVISE
+      9: DO_NOT_ADVISE
+    limits:
+      hs_go_m: 0.75
+      hs_caution_m: 1.25
+      wind_go_kn: 12
+      wind_caution_kn: 18
+      gust_caution_kn: 22
+      steepness_caution: 0.040
+      visibility_caution_m: 2000
+      long_period_swell_s: 15.0
+
+  mechanised_trawler:
+    label_en: Mechanised trawler (0-200 nm)
+    label_local: இயந்திரமயமாக்கப்பட்ட இழுவை படகு
+    range_nm: 200
+    loa_m: 15.0
+    cruise_speed_kn: 9.0
+    max_speed_kn: 14.0
+    min_depth_m: 2.5
+    crew_typical: 8
+    max_verdict_for_band:
+      2: GO
+      3: GO
+      4: GO
+      5: GO_WITH_CAUTION    # ROUGH
+      6: DO_NOT_ADVISE      # VERY ROUGH
+      7: DO_NOT_ADVISE
+      8: DO_NOT_ADVISE
+      9: DO_NOT_ADVISE
+    limits:
+      hs_go_m: 2.5
+      hs_caution_m: 4.0
+      wind_go_kn: 22
+      wind_caution_kn: 30
+      gust_caution_kn: 38
+      steepness_caution: 0.055
+      visibility_caution_m: 1000
+      long_period_swell_s: 15.0

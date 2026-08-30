@@ -1,0 +1,117 @@
+# Geofence classes. Five semantically distinct classes plus the dynamic hazard class.
+# Lead distances are in nautical miles. Copy is carried per class, per language, and is
+# deliberately NOT interchangeable — a 1974 historic-waters line is a different legal
+# regime from a 1976 maritime boundary, and a conservation zone is neither.
+
+classes:
+  IMBL_HISTORIC_WATERS:
+    severity: legal_hard
+    warn_nm: 2.0
+    critical_nm: 0.5
+    colour: "#d32029"
+    title:
+      en: 1974 India-Sri Lanka historic waters boundary
+      ta: 1974 இந்தியா-இலங்கை வரலாற்று நீர்ப்பரப்பு எல்லை
+    warn:
+      en: "You are {distance} nm from the 1974 India-Sri Lanka historic waters boundary, closing in about {eta}. Crossing it risks arrest and seizure of your boat. Alter course now."
+      ta: "1974 இந்தியா-இலங்கை வரலாற்று நீர்ப்பரப்பு எல்லையிலிருந்து {distance} கடல் மைல் தொலைவில் உள்ளீர்கள். சுமார் {eta} இல் நெருங்குகிறீர்கள். கடந்தால் கைது மற்றும் படகு பறிமுதல் ஆபத்து. உடனே திசையை மாற்றுங்கள்."
+    critical:
+      en: "CRITICAL: {distance} nm from the 1974 historic waters boundary. Turn back immediately. If detained, contact Coast Guard 1554."
+      ta: "அவசரம்: 1974 வரலாற்று நீர்ப்பரப்பு எல்லையிலிருந்து {distance} கடல் மைல். உடனடியாக திரும்புங்கள். தடுத்து வைக்கப்பட்டால் கடலோர காவல்படை 1554."
+    breach:
+      en: "BREACH: you have crossed the 1974 historic waters boundary. Return to Indian waters on a reciprocal course and call Coast Guard 1554."
+      ta: "மீறல்: 1974 வரலாற்று நீர்ப்பரப்பு எல்லையை கடந்துவிட்டீர்கள். எதிர் திசையில் இந்திய நீர்ப்பரப்புக்கு திரும்பி கடலோர காவல்படை 1554 ஐ அழைக்கவும்."
+
+  IMBL_MARITIME_BOUNDARY:
+    severity: legal_hard
+    warn_nm: 2.0
+    critical_nm: 0.5
+    colour: "#f5222d"
+    title:
+      en: 1976 India-Sri Lanka maritime boundary
+      ta: 1976 இந்தியா-இலங்கை கடல் எல்லை
+    warn:
+      en: "You are {distance} nm from the 1976 India-Sri Lanka maritime boundary, closing in about {eta}. Beyond it you are in Sri Lankan waters. Alter course."
+      ta: "1976 இந்தியா-இலங்கை கடல் எல்லையிலிருந்து {distance} கடல் மைல் தொலைவில். சுமார் {eta} இல் நெருங்குகிறீர்கள். அதற்கு அப்பால் இலங்கை நீர்ப்பரப்பு. திசையை மாற்றுங்கள்."
+    critical:
+      en: "CRITICAL: {distance} nm from the 1976 maritime boundary. Turn back immediately."
+      ta: "அவசரம்: 1976 கடல் எல்லையிலிருந்து {distance} கடல் மைல். உடனடியாக திரும்புங்கள்."
+    breach:
+      en: "BREACH: you have crossed the 1976 maritime boundary into Sri Lankan waters. Return west immediately and call Coast Guard 1554."
+      ta: "மீறல்: 1976 கடல் எல்லையை கடந்து இலங்கை நீர்ப்பரப்பில் உள்ளீர்கள். உடனே மேற்கே திரும்பி 1554 ஐ அழைக்கவும்."
+
+  MPA:
+    severity: restricted
+    warn_nm: 1.0
+    critical_nm: 0.25
+    colour: "#fa8c16"
+    title:
+      en: Marine National Park
+      ta: கடல் தேசிய பூங்கா
+    warn:
+      en: "{name} boundary is {distance} nm ahead. Fishing gear restrictions apply inside — this is a conservation area, not a national border."
+      ta: "{name} எல்லை {distance} கடல் மைல் தொலைவில். உள்ளே மீன்பிடி கருவி கட்டுப்பாடுகள் உள்ளன — இது பாதுகாப்பு பகுதி, நாட்டு எல்லை அல்ல."
+    critical:
+      en: "You are at the edge of {name}. Trawling and anchoring are prohibited inside."
+      ta: "{name} விளிம்பில் உள்ளீர்கள். உள்ளே இழுவை மீன்பிடிப்பு மற்றும் நங்கூரமிடுதல் தடை."
+    breach:
+      en: "You are inside {name}. Haul gear and leave the protected area."
+      ta: "{name} உள்ளே உள்ளீர்கள். வலையை இழுத்து பாதுகாக்கப்பட்ட பகுதியை விட்டு வெளியேறுங்கள்."
+
+  ECO_SENSITIVE:
+    severity: advisory
+    warn_nm: 0.5
+    critical_nm: 0.1
+    colour: "#52c41a"
+    title:
+      en: Ecologically sensitive habitat
+      ta: சூழலியல் உணர்திறன் வாழ்விடம்
+    warn:
+      en: "{name} is {distance} nm ahead. Avoid anchoring and bottom trawling over it."
+      ta: "{name} {distance} கடல் மைல் தொலைவில். அதன் மேல் நங்கூரமிடுவதையும் அடிமட்ட இழுவையையும் தவிர்க்கவும்."
+    critical:
+      en: "You are over {name}. Do not anchor here."
+      ta: "{name} மேல் உள்ளீர்கள். இங்கே நங்கூரமிட வேண்டாம்."
+    breach:
+      en: "You are over {name}. Anchoring or trawling here damages habitat that fish stocks depend on."
+      ta: "{name} மேல் உள்ளீர்கள். இங்கே நங்கூரமிடுவது வாழ்விடத்தை சேதப்படுத்தும்."
+
+  USER_DEFINED:
+    severity: advisory
+    warn_nm: 1.0
+    critical_nm: 0.25
+    colour: "#722ed1"
+    title:
+      en: Operational boundary
+      ta: செயல்பாட்டு எல்லை
+    warn:
+      en: "{name} is {distance} nm ahead."
+      ta: "{name} {distance} கடல் மைல் தொலைவில்."
+    critical:
+      en: "You are at the edge of {name}."
+      ta: "{name} விளிம்பில் உள்ளீர்கள்."
+    breach:
+      en: "You have entered {name}."
+      ta: "{name} உள்ளே நுழைந்துவிட்டீர்கள்."
+
+  HAZARD_EXCLUSION:
+    severity: hazard
+    warn_nm: 5.0
+    critical_nm: 2.0
+    colour: "#eb2f96"
+    title:
+      en: Hazard exclusion zone
+      ta: ஆபத்து விலக்கு மண்டலம்
+    warn:
+      en: "{name} is {distance} nm ahead on your course, about {eta} away. Do not enter."
+      ta: "{name} உங்கள் பாதையில் {distance} கடல் மைல், சுமார் {eta} தொலைவில். உள்ளே செல்ல வேண்டாம்."
+    critical:
+      en: "CRITICAL: {name} is {distance} nm ahead. Alter course away now."
+      ta: "அவசரம்: {name} {distance} கடல் மைல் முன்னால். இப்போதே திசையை மாற்றுங்கள்."
+    breach:
+      en: "You are inside {name}. Make for the nearest safe harbour."
+      ta: "{name} உள்ளே உள்ளீர்கள். அருகிலுள்ள பாதுகாப்பான துறைமுகத்திற்கு செல்லுங்கள்."
+
+# Projection horizon for ETA-to-breach in the push loop.
+projection_seconds: 3600
+min_speed_for_eta_kn: 0.5

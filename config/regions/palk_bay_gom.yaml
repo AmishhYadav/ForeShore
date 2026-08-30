@@ -1,0 +1,56 @@
+region_id: palk_bay_gom
+display_name_en: Palk Bay & Gulf of Mannar
+display_name_local: பாக் விரிகுடா மற்றும் மன்னார் வளைகுடா
+bbox: [78.0, 8.0, 80.6, 10.9]          # minlon, minlat, maxlon, maxlat (EPSG:4326)
+timezone: Asia/Kolkata
+primary_language: ta
+fallback_language: en
+languages: [ta, en]
+
+anchor_ports:
+  - name: Rameswaram
+    lat: 9.2876
+    lon: 79.3129
+    district: Ramanathapuram
+  - name: Nagapattinam
+    lat: 10.7660
+    lon: 79.8450
+    district: Nagapattinam
+  - name: Tuticorin
+    lat: 8.7642
+    lon: 78.1348
+    district: Thoothukudi
+
+districts: [Ramanathapuram, Pudukkottai, Thanjavur, Nagapattinam, Thoothukudi, Tirunelveli]
+
+sources:
+  imd_coastal_office_id: 6              # ACWC Chennai
+  imd_bulletin_coast_block: "South Tamilnadu coast"
+  imd_bulletin_fallback_blocks: ["North Tamilnadu coast"]
+  incois_pfz_sector: SEC006             # SOUTH TAMILNADU
+  incois_hab_sector: "Gulf of Manmar (GoM)"
+  imbl_line_filter: "%Sri Lanka%"
+  imbl_historic_waters_line_ids: [1306]
+  imbl_maritime_boundary_line_ids: [1307, 1310, 1311]
+
+coast_guard:
+  name: Indian Coast Guard — Maritime Rescue
+  contact: "1554"
+
+geofences:
+  mpa:
+    - id: gom_marine_national_park
+      name_en: Gulf of Mannar Marine National Park
+      name_local: மன்னார் வளைகுடா கடல் தேசிய பூங்கா
+      source_file: mpa_gulf_of_mannar.geojson
+
+routing:
+  grid_deg: 0.01
+  min_depth_m: 3.0
+
+basemap:
+  wms_url: "https://bhuvan-vec1.nrsc.gov.in/bhuvan/wms"
+  layer: "india3"
+  attribution: "ISRO / NRSC Bhuvan"
+  center: [9.3, 79.2]
+  zoom: 8
