@@ -24,9 +24,9 @@ anchor_ports:
 districts: [Kachchh, Devbhumi Dwarka, Jamnagar, Porbandar, Morbi]
 
 sources:
-  imd_coastal_office_id: 1              # CWC Mumbai — governs the Gujarat coast
-  imd_bulletin_coast_block: "North Gujarat coast"
-  imd_bulletin_fallback_blocks: ["South Gujarat coast", "Gujarat coast"]
+  imd_coastal_office_id: 3              # CWC Ahmedabad — governs the Gujarat coast
+  imd_bulletin_coast_block: "North Gujrath coast"   # IMD's own spelling — verified live
+  imd_bulletin_fallback_blocks: ["South Gujrath coast"]
   incois_pfz_sector: SEC001
   incois_hab_sector: "Gulf of Kutch (GoK)"
   imbl_line_filter: "%Pakistan%"
