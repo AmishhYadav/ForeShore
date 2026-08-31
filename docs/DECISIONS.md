@@ -122,3 +122,36 @@ and produces the same trace; only the prose is poorer.
 Two reasons. It removes the API from the demo's critical path, and it makes the safety
 argument checkable: the decision is in code a reviewer can read, not in a prompt they
 have to trust.
+
+---
+
+## D8 — A partly-missing geofence layer set degrades per class, not wholesale
+
+**Finding.** `check_geofences` abstained entirely whenever *any* required static layer was
+absent. INCOIS's MHW GeoServer returns intermittent 503s (observed 2026-08-31 for
+`MANGROVE_ZONE_DISS`), so a flaky **advisory** habitat layer was masking the **legal**
+boundary check — the system could not say a vessel was 0.2 nm from the 1974 line because
+it had no mangrove polygons.
+
+**Decision.** Abstain wholesale only when *nothing* is checkable. Otherwise check every
+layer that is present, mark the result `partial`, and name the classes that went
+unchecked. Missing layers are split by consequence: an absent `IMBL_*` layer means the
+maritime boundary itself is unverified and is reported as a missing input, while an absent
+`ECO_SENSITIVE` layer degrades the advice and is reported as a note. "No fences nearby"
+and "cannot check" remain different answers, which was the original point of the guard.
+
+---
+
+## D9 — A bulletin cannot authorise a trip outside its own validity window
+
+**Finding.** Asking "can I go out tomorrow morning?" against today's bulletin correctly
+yields `DO_NOT_ADVISE`: the IMD Coastal Bulletin's validity is 12 h, and tomorrow morning
+falls outside it. The ceiling evaluates staleness against the **time being asked about**,
+not against wall-clock now.
+
+**Consequence for the demo.** The Phase 8 demo script's opening beat asks about tomorrow
+morning and expects an amber verdict. Against a live bulletin that beat will abstain, which
+is correct behaviour and a weak opening. The frozen fixture must therefore be a bulletin
+whose validity window covers the time the demo query asks about — or the query asks about
+the window the governing bulletin actually covers. Do not "fix" this by relaxing the
+staleness rule.

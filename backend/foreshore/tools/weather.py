@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from ..models import Observation, ToolResult, utcnow
+from ..models import Observation, ToolResult
 from .registry import latlon_schema, registry
 
 # Canonical variable names (as emitted by OpenMeteoForecast) that make up "weather" in

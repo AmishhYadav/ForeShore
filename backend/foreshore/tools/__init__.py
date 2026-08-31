@@ -22,7 +22,8 @@ TOOL_MODULES: tuple[str, ...] = (
     "sea_state",      # 2  get_sea_state
     "weather",        # 3  get_weather, 4 get_lightning_nowcast
     "tide",           # 5  get_tide, 6 get_currents
-    "pfz",            # 7  find_nearest_pfz, 8 derive_pfz_zones
+    "pfz",            # 7  find_nearest_pfz
+    "pfz_derived",    # 8  derive_pfz_zones
     "geofence_tools",  # 9  check_geofences, 10 get_exclusion_zones
     "routing_tools",  # 11 plan_route
     "hazards",        # 12 get_hazard_alerts
