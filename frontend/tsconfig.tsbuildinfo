@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/routes/boat/boatapp.tsx","./src/routes/console/consoleapp.tsx","./src/shared/api.ts","./src/shared/geofencecheck.ts","./src/shared/offline.ts","./src/shared/speech.d.ts","./src/shared/types.ts","./src/shared/voice.ts","./src/shared/ws.ts"],"version":"5.9.3"}

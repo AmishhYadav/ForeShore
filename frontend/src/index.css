@@ -1,0 +1,65 @@
+/* Shared design tokens — both /boat and /console build on this palette so the two
+   surfaces read as one product family, not two unrelated apps. Maritime, high-contrast,
+   safety-instrument feel (think ECDIS/bridge display, not a consumer weather app):
+   deep navy grounds, a restrained accent, and verdict colours that are load-bearing UI,
+   not decoration — GO/CAUTION/DO_NOT_ADVISE must be instantly distinguishable at a
+   glance, including to a colour-blind viewer (paired with icon + label, never colour
+   alone). */
+
+:root {
+  --ink-950: #06131f;
+  --ink-900: #0b1f30;
+  --ink-800: #0f2b40;
+  --ink-700: #16405c;
+  --ink-600: #1f5779;
+  --ink-500: #2c7196;
+  --ink-100: #dce9f0;
+  --ink-50: #f4f8fb;
+
+  --accent: #ff9d3c;
+  --accent-dim: #b76a1f;
+
+  --verdict-go: #1fa37a;
+  --verdict-go-bg: #0f2e26;
+  --verdict-caution: #e0a815;
+  --verdict-caution-bg: #332608;
+  --verdict-stop: #d9483f;
+  --verdict-stop-bg: #341210;
+
+  --severity-legal: #d9483f;
+  --severity-hazard: #e0a815;
+  --severity-restricted: #c77bd6;
+  --severity-advisory: #4fa3d1;
+
+  --font-sans: "Inter", "Noto Sans Tamil", system-ui, -apple-system, sans-serif;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--ink-950);
+  color: var(--ink-50);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+}
