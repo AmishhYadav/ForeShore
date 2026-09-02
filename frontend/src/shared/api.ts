@@ -10,6 +10,7 @@ import type {
   QueryRequest,
   RegionInfo,
   RouteShape,
+  ToolResultEnvelope,
   Verdict,
   VesselState,
 } from "./types";
@@ -55,7 +56,7 @@ export function postRoute(body: {
   dest_lon: number;
   departure?: string;
   vessel_class?: string;
-}): Promise<{ ok: boolean; payload: { route: RouteShape } }> {
+}): Promise<ToolResultEnvelope<{ route: RouteShape; cost_breakdown?: unknown; why_it_bends?: string[] }>> {
   return request("/api/route", { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -64,7 +65,7 @@ export function getVerdict(params: {
   lon: number;
   vessel_class?: string;
   when?: string;
-}): Promise<{ ok: boolean; payload: { verdict: Verdict } }> {
+}): Promise<ToolResultEnvelope<{ verdict: Verdict }>> {
   const q = new URLSearchParams();
   q.set("lat", String(params.lat));
   q.set("lon", String(params.lon));
@@ -79,7 +80,7 @@ export function postGeofenceCheck(body: {
   heading_deg?: number;
   speed_kn?: number;
   classes?: string[];
-}): Promise<{ ok: boolean; payload: Record<string, unknown> }> {
+}): Promise<ToolResultEnvelope> {
   return request("/api/geofence/check", { method: "POST", body: JSON.stringify(body) });
 }
 

@@ -8,6 +8,18 @@
 
 export type VerdictLevel = "GO" | "GO_WITH_CAUTION" | "DO_NOT_ADVISE";
 
+/** Uniform envelope every tool in the registry returns — ToolResult.to_dict(). */
+export interface ToolResultEnvelope<TPayload = Record<string, unknown>> {
+  tool: string;
+  ok: boolean;
+  summary: string;
+  observations: Observation[];
+  payload: TPayload;
+  error: string | null;
+  partial: boolean;
+  missing: string[];
+}
+
 export type Authority =
   | "IMD"
   | "INCOIS"
