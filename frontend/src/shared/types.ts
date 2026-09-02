@@ -38,7 +38,7 @@ export type GeofenceClass =
   | "USER_DEFINED"
   | "HAZARD_EXCLUSION";
 
-export type AlertLevel = "WARN" | "CRITICAL";
+export type AlertLevel = "INFO" | "WARN" | "CRITICAL" | "BREACH";
 
 export type Freshness = "live" | "recent" | "stale" | "expired";
 
@@ -88,16 +88,17 @@ export interface Verdict {
   valid_to: string | null;
 }
 
+/** One row per observation — agents/synthesis.py's EvidenceRow.to_dict(). `display` is
+ * the value already formatted with its unit ("0.59 m", "MODERATE") — never re-derive a
+ * bare number out of it client-side; render it as the label it is. */
 export interface EvidencePanelRow {
   variable: string;
-  value: number | string | null;
-  unit: string;
+  display: string;
   source_name: string;
   authority: Authority;
-  acquired_at: string;
-  issued_at: string | null;
-  resolution_m: number | null;
+  resolution: string;
   freshness: Freshness;
+  acquired_at: string;
   is_derived: boolean;
   governs: boolean;
 }
@@ -113,32 +114,59 @@ export interface Plan {
   steps: PlanStep[];
 }
 
+/** One node of the stored reasoning trace — models.py's TraceStep.to_dict(). */
 export interface TraceStep {
   step_id: string;
-  parent: string | null;
+  query_id: string;
+  parent_id: string | null;
   agent: string;
+  kind: "plan" | "tool_call" | "tool_result" | "synthesis" | "ceiling" | "error";
   tool: string | null;
   args: Record<string, unknown>;
   result_digest: string;
   provenance_ids: string[];
   duration_ms: number;
   ts: string;
-  [key: string]: unknown;
+  why: string | null;
+  ok: boolean;
+  error: string | null;
 }
 
+/** GET /api/trace/{query_id} response shape — store/traces.py's TraceStore.tree(),
+ * nested by parent_id rather than a flat list. */
+export interface TraceTreeNode {
+  step: TraceStep;
+  children: TraceTreeNode[];
+}
+
+/** models.py's RouteLeg.to_dict(). */
 export interface RouteLeg {
   from: [number, number];
   to: [number, number];
   distance_nm: number;
+  bearing_deg: number;
+  eta_seconds: number;
   cost_breakdown: Record<string, number>;
+  note: string | null;
 }
 
+/** models.py's Route.to_dict(). No `distance_nm`/`eta`/`why_it_bends` fields — the
+ * closest equivalents are `total_distance_nm`/`total_eta_seconds`/`avoided` below. */
 export interface RouteShape {
   waypoints: [number, number][];
-  distance_nm: number;
-  eta: string | null;
   legs: RouteLeg[];
-  why_it_bends: string[];
+  total_distance_nm: number;
+  direct_distance_nm: number;
+  detour_pct: number;
+  total_eta_seconds: number;
+  cost_breakdown: Record<string, number>;
+  /** Names of hazards/boundaries the route steered around — the "why it bends" list. */
+  avoided: string[];
+  feasible: boolean;
+  failure_reason: string | null;
+  departure: string | null;
+  vessel_class: string | null;
+  evidence: Observation[];
 }
 
 export interface ArchitectureSpecialist {
@@ -176,7 +204,8 @@ export interface QueryOutcome {
   payloads: {
     evidence_panel: EvidencePanelRow[];
     labels: Record<string, string>;
-    verdict_copy: { headline: string; reason: string };
+    /** VERDICT_COPY[level][language] — null only when no verdict was evaluated. */
+    verdict_copy: { headline: string; lead: string } | null;
     [toolPayloadKey: string]: unknown;
   };
   unsourced_numbers: string[];
@@ -215,9 +244,11 @@ export interface VesselState {
   heading_deg: number;
   speed_kn: number;
   vessel_class: string;
-  is_simulated: true;
   updated_at: string;
-  [key: string]: unknown;
+  home_port: string | null;
+  crew: number | null;
+  is_simulated: true;
+  last_verdict: VerdictLevel | null;
 }
 
 /** WS /ws/alerts server -> client messages. */

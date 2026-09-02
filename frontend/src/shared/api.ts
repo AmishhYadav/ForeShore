@@ -11,6 +11,7 @@ import type {
   RegionInfo,
   RouteShape,
   ToolResultEnvelope,
+  TraceTreeNode,
   Verdict,
   VesselState,
 } from "./types";
@@ -56,7 +57,7 @@ export function postRoute(body: {
   dest_lon: number;
   departure?: string;
   vessel_class?: string;
-}): Promise<ToolResultEnvelope<{ route: RouteShape; cost_breakdown?: unknown; why_it_bends?: string[] }>> {
+}): Promise<ToolResultEnvelope<{ route: RouteShape | null }>> {
   return request("/api/route", { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -132,7 +133,7 @@ export function getTraces(limit = 20): Promise<{ queries: Record<string, unknown
   return request(`/api/traces?limit=${limit}`);
 }
 
-export function getTrace(queryId: string): Promise<{ query_id: string; steps: unknown[] }> {
+export function getTrace(queryId: string): Promise<{ query_id: string; steps: TraceTreeNode[] }> {
   return request(`/api/trace/${queryId}`);
 }
 
