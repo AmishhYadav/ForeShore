@@ -380,6 +380,7 @@ class GeofenceEngine:
                         "warn_nm": props.get("warn_nm", spec.warn_nm),
                         "critical_nm": props.get("critical_nm", spec.critical_nm),
                         "layer_id": layer_id,
+                        "title": spec.title,
                     }
                 )
                 features.append({**f, "properties": props})
@@ -397,6 +398,7 @@ class GeofenceEngine:
                         "colour": spec.colour,
                         "layer_id": "hazard_exclusion",
                         "dynamic": True,
+                        "title": spec.title,
                     },
                 }
             )
