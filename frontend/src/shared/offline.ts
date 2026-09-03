@@ -95,6 +95,13 @@ export function getCachedRoute(): Promise<RouteShape | undefined> {
 // UI can still speak a verdict with zero network (Web Speech synthesis itself needs no
 // network on most platforms, but this covers browsers/voices that do fetch a remote
 // voice model, and doubles as a cache for Bhashini TTS once that adapter is live).
+//
+// Currently unpopulated by design, not by oversight: `WebSpeechVoiceAdapter.speak()`
+// (shared/voice.ts) drives `window.speechSynthesis` directly, which has no API to hand
+// back the rendered audio as a Blob to cache — and `BhashiniVoiceAdapter`, the one
+// adapter whose network call *would* return cacheable audio bytes, is still a stub that
+// throws (CLAUDE.md open unknown: Bhashini/ULCA registration has not resolved). Wire
+// `cacheTtsPhrase` into `BhashiniVoiceAdapter.speak()` once that adapter is real.
 
 export function cacheTtsPhrase(key: string, audioBlob: Blob): Promise<void> {
   return put("ttsPhrases", key, audioBlob);
