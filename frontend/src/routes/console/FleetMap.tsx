@@ -20,13 +20,30 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { RegionInfo, VerdictLevel, VesselState } from "@shared/types";
+import { getHazards, getPfzDerived, getPfzOfficial } from "@shared/api";
+import type {
+  HazardsPayload,
+  PfzDerivedPayload,
+  PfzOfficialPayload,
+  RegionInfo,
+  VerdictLevel,
+  VesselState,
+} from "@shared/types";
 import { formatTimeAgo, geofenceClassLabel, severityVar, verdictLabel, verdictVar } from "./format";
 
 interface FleetMapProps {
   region: RegionInfo | null;
   vessels: VesselState[];
   geofences: GeoJSON.FeatureCollection | null;
+  /** Optional external recentre target — [lat, lon], same order as RegionInfo.basemap's
+   * own `center`. The map only constructs once (see the "map construction" effect below,
+   * gated on `!mapRef.current`), so a later region swap needs this explicit prop to move
+   * the already-built map; RegionSwitcher.tsx is the only current caller, passing the
+   * new region's own basemap.center/zoom after a swap. Added deliberately minimally per
+   * this task's brief — a single prop pair plus the one reactive effect below, no other
+   * change to this component. */
+  center?: [number, number];
+  zoom?: number;
 }
 
 interface Basemap {
@@ -151,14 +168,18 @@ interface MarkerEntry {
   el: HTMLDivElement;
 }
 
-export default function FleetMap({ region, vessels, geofences }: FleetMapProps) {
+export default function FleetMap({ region, vessels, geofences, center, zoom }: FleetMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<string, MarkerEntry>>(new Map());
   const geofencesRef = useRef<GeoJSON.FeatureCollection | null>(geofences);
+  const flownToRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [tileFailed, setTileFailed] = useState(false);
+  const [pfzOfficial, setPfzOfficial] = useState<PfzOfficialPayload | null>(null);
+  const [pfzDerived, setPfzDerived] = useState<PfzDerivedPayload | null>(null);
+  const [hazards, setHazards] = useState<HazardsPayload | null>(null);
 
   geofencesRef.current = geofences;
 
@@ -166,11 +187,21 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
   useEffect(() => {
     if (!containerRef.current || mapRef.current || !region) return;
     const basemap = (region.basemap ?? {}) as Basemap;
-    const center: [number, number] = basemap.center
-      ? [basemap.center[1], basemap.center[0]]
-      : [79.2, 9.3];
-    const zoom = basemap.zoom ?? 7;
+    // [lat, lon] — same convention as the `center` prop and basemap.center itself; kept
+    // as its own value (rather than reusing initialCenter below) so the key this seeds
+    // flownToRef with is byte-for-byte the same format the recentre effect's key uses.
+    const rawCenter: [number, number] = basemap.center ?? [9.3, 79.2];
+    const initialCenter: [number, number] = [rawCenter[1], rawCenter[0]]; // maplibre wants [lng, lat]
+    const initialZoom = basemap.zoom ?? 7;
+    // This effect only ever fires once per mounted map (gated on `!mapRef.current`
+    // above), using whatever `region` it saw first. Record that starting point as
+    // "already flown to" so the recentre effect below doesn't replay an identical flyTo
+    // the moment `ready` flips true.
+    flownToRef.current = `${rawCenter[0]},${rawCenter[1]},${initialZoom}`;
     const oceanColor = resolveVar("--ink-900", "#0b1f30");
+    const pfzOfficialColor = resolveVar("--pfz-official", "#2dd4bf");
+    const pfzDerivedColor = resolveVar("--pfz-derived", "#7c93ff");
+    const hazardTrackColor = resolveVar("--hazard-track", "#ff5da2");
 
     const rasterTileUrl =
       basemap.wms_url && basemap.layer
@@ -210,8 +241,8 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
       const map = new maplibregl.Map({
         container: containerRef.current,
         style,
-        center,
-        zoom,
+        center: initialCenter,
+        zoom: initialZoom,
       });
       mapRef.current = map;
       map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -225,10 +256,43 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
       });
 
       map.on("load", () => {
+        const hazard = resolveVar("--severity-hazard", "#e0a815");
+
+        // Hazard exclusion polygons + derived PFZ zones sit below the geofence layers
+        // (added next) so geofence hover/click stays on top; the official PFZ line and
+        // the cyclone track (added further below) sit above everything since they're
+        // thin, high-priority lines that must stay visible over the fills.
+        map.addSource("hazard-polygons", { type: "geojson", data: EMPTY_FC });
+        map.addLayer({
+          id: "hazard-fill",
+          type: "fill",
+          source: "hazard-polygons",
+          paint: { "fill-color": hazard, "fill-opacity": 0.25 },
+        });
+        map.addLayer({
+          id: "hazard-line",
+          type: "line",
+          source: "hazard-polygons",
+          paint: { "line-color": hazard, "line-width": 2, "line-opacity": 0.9 },
+        });
+
+        map.addSource("pfz-derived", { type: "geojson", data: EMPTY_FC });
+        map.addLayer({
+          id: "pfz-derived-fill",
+          type: "fill",
+          source: "pfz-derived",
+          paint: { "fill-color": pfzDerivedColor, "fill-opacity": 0.18 },
+        });
+        map.addLayer({
+          id: "pfz-derived-line",
+          type: "line",
+          source: "pfz-derived",
+          paint: { "line-color": pfzDerivedColor, "line-width": 1.5, "line-dasharray": [2, 2], "line-opacity": 0.9 },
+        });
+
         map.addSource("geofences", { type: "geojson", data: geofencesRef.current ?? EMPTY_FC });
 
         const legal = resolveVar("--severity-legal", "#d9483f");
-        const hazard = resolveVar("--severity-hazard", "#e0a815");
         const restricted = resolveVar("--severity-restricted", "#c77bd6");
         const advisory = resolveVar("--severity-advisory", "#4fa3d1");
         const severityMatch: maplibregl.ExpressionSpecification = [
@@ -289,6 +353,24 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
           });
         }
 
+        map.addSource("pfz-official", { type: "geojson", data: EMPTY_FC });
+        map.addLayer({
+          id: "pfz-official-line",
+          type: "line",
+          source: "pfz-official",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": pfzOfficialColor, "line-width": 3, "line-opacity": 0.95 },
+        });
+
+        map.addSource("hazard-track", { type: "geojson", data: EMPTY_FC });
+        map.addLayer({
+          id: "hazard-track-line",
+          type: "line",
+          source: "hazard-track",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": hazardTrackColor, "line-width": 2.5, "line-dasharray": [3, 1.5], "line-opacity": 0.95 },
+        });
+
         setReady(true);
       });
     } catch (err) {
@@ -311,6 +393,73 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
     const source = map.getSource("geofences") as maplibregl.GeoJSONSource | undefined;
     source?.setData(geofences ?? EMPTY_FC);
   }, [geofences, ready]);
+
+  // -- fetch official/derived PFZ + hazards for the whole active region -----------------
+  // Self-contained fetch, mirroring the fetch-and-refresh lifecycle already used for
+  // geofences elsewhere in this codebase (fetch on mount, .catch -> console.warn, leave
+  // the layer empty rather than erroring) — kept local to this component since this data
+  // is map-only. Keyed on `region.region_id` so a region swap re-fires it, whatever
+  // upstream mechanism changed the `region` prop.
+  useEffect(() => {
+    if (!region) return;
+    const [minLon, minLat, maxLon, maxLat] = region.bbox;
+    const centerLat = (minLat + maxLat) / 2;
+    const centerLon = (minLon + maxLon) / 2;
+    let cancelled = false;
+
+    getPfzOfficial(centerLat, centerLon)
+      .then((res) => {
+        if (!cancelled) setPfzOfficial(res.payload);
+      })
+      .catch((err) => console.warn("[FleetMap] failed to fetch official PFZ line:", err));
+
+    getPfzDerived({ bbox: region.bbox })
+      .then((res) => {
+        if (!cancelled) setPfzDerived(res.payload);
+      })
+      .catch((err) => console.warn("[FleetMap] failed to fetch derived PFZ zones:", err));
+
+    getHazards({ bbox: region.bbox })
+      .then((res) => {
+        if (!cancelled) setHazards(res.payload);
+      })
+      .catch((err) => console.warn("[FleetMap] failed to fetch hazards:", err));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [region?.region_id]);
+
+  // -- PFZ / hazard layer data updates ---------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const officialData: GeoJSON.FeatureCollection = pfzOfficial?.geometry
+      ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: pfzOfficial.geometry }] }
+      : EMPTY_FC;
+    (map.getSource("pfz-official") as maplibregl.GeoJSONSource | undefined)?.setData(officialData);
+    (map.getSource("pfz-derived") as maplibregl.GeoJSONSource | undefined)?.setData(pfzDerived?.zones ?? EMPTY_FC);
+    (map.getSource("hazard-polygons") as maplibregl.GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: hazards?.polygons ?? [],
+    });
+    (map.getSource("hazard-track") as maplibregl.GeoJSONSource | undefined)?.setData(hazards?.cyclone_track ?? EMPTY_FC);
+  }, [pfzOfficial, pfzDerived, hazards, ready]);
+
+  // -- external recentre (region swap) -------------------------------------------------
+  // The map only ever constructs once (see above); a region swap after that needs an
+  // explicit fly-to rather than a rebuild. `flownToRef` both skips the redundant flyTo
+  // this effect would otherwise fire the instant `ready` flips true (construction already
+  // centred on this same point) and skips repeat flights to a `center`/`zoom` pair this
+  // component has already flown to.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !center) return;
+    const key = `${center[0]},${center[1]},${zoom ?? ""}`;
+    if (flownToRef.current === key) return;
+    flownToRef.current = key;
+    map.flyTo({ center: [center[1], center[0]], zoom: zoom ?? map.getZoom(), duration: 1400 });
+  }, [center, zoom, ready]);
 
   // -- vessel markers: create/update/remove, keyed by vessel_id ------------------------
   useEffect(() => {
@@ -361,6 +510,24 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
     }
   }, [vessels, ready]);
 
+  const officialNote = !pfzOfficial
+    ? "Loading official PFZ line…"
+    : pfzOfficial.geometry
+      ? `Official INCOIS PFZ line — advisory dated ${pfzOfficial.advisory_date ?? "unknown date"}`
+      : "No official PFZ line published for this sector today.";
+
+  const derivedNote = !pfzDerived
+    ? "Loading indicative fishing-zone estimate…"
+    : `${pfzDerived.disclaimer}${
+        !pfzDerived.chlorophyll_available && pfzDerived.chlorophyll_reason ? ` (${pfzDerived.chlorophyll_reason})` : ""
+      }`;
+
+  const hazardNote = !hazards
+    ? "Checking for active cyclone hazard…"
+    : hazards.no_active_hazard
+      ? "No active cyclone hazard in this area."
+      : "Active cyclone hazard — exclusion area and track shown on the map.";
+
   if (mapError) {
     return (
       <div className="fm-fallback">
@@ -393,15 +560,31 @@ export default function FleetMap({ region, vessels, geofences }: FleetMapProps) 
           <LegendSwatch color={severityVar("restricted")} label="Restricted (MPA)" />
           <LegendSwatch color={severityVar("advisory")} label="Advisory (eco-sensitive)" />
         </div>
+        <div className="fm-legend__group">
+          <div className="fm-legend__heading">Fishing zones</div>
+          <LegendSwatch color="var(--pfz-official)" label="Official INCOIS PFZ line" />
+          <LegendSwatch color="var(--pfz-derived)" label="FORESHORE-derived (indicative)" dashed />
+          <div className="fm-legend__note">{officialNote}</div>
+          <div className="fm-legend__note">{derivedNote}</div>
+        </div>
+        <div className="fm-legend__group">
+          <div className="fm-legend__heading">Cyclone hazard</div>
+          <LegendSwatch color={severityVar("hazard")} label="Exclusion area" />
+          <LegendSwatch color="var(--hazard-track)" label="Track" />
+          <div className="fm-legend__note">{hazardNote}</div>
+        </div>
       </div>
     </div>
   );
 }
 
-function LegendSwatch({ color, label }: { color: string; label: string }) {
+function LegendSwatch({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
   return (
     <div className="fm-legend__item">
-      <span className="fm-legend__swatch" style={{ background: color }} />
+      <span
+        className={`fm-legend__swatch${dashed ? " fm-legend__swatch--dashed" : ""}`}
+        style={dashed ? { borderColor: color } : { background: color }}
+      />
       <span>{label}</span>
     </div>
   );

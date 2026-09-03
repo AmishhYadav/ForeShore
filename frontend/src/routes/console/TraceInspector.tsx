@@ -2,37 +2,44 @@
  * Trace inspector — "are those real agents, or five boxes on a slide?"
  *
  * `GET /api/trace/{query_id}` (see backend/foreshore/store/traces.py::TraceStore.tree)
- * returns a *nested* tree keyed by `parent_id`, not the flat `TraceStep[]` that
- * `shared/types.ts`'s `TraceStep` interface implies (that interface also names the
- * field `parent`; the backend's `TraceStep.to_dict()` emits `parent_id` — a mismatch
- * worth fixing in shared/types.ts, noted rather than touched here per the brief). Local
- * types below mirror the verified runtime shape instead of the shared interface.
+ * returns a nested tree of `TraceTreeNode`s keyed by `parent_id`. `shared/types.ts`'s
+ * `TraceStep`/`TraceTreeNode` interfaces have since been corrected to name the field
+ * `parent_id` (matching the backend's `TraceStep.to_dict()`) — verified against a live
+ * `/api/trace/{id}` response — so this file imports them directly instead of
+ * hand-duplicating local types.
+ *
+ * Each step's `provenance_ids` are bare `"<source_id>@<issued_at-or-acquired_at>"` keys
+ * (models.py's `Provenance.provenance_id`). To render the actual provenance record
+ * (source name, authority, acquisition time, freshness, resolution) rather than the raw
+ * id string, this component joins those ids against the *same query's*
+ * `QueryOutcome.payloads.evidence_panel` rows (agents/synthesis.py's `EvidenceRow`,
+ * which carries the identical `provenance_id` key for exactly this purpose) — passed
+ * down as the `evidencePanel` prop by ConsoleApp, the only place in this tree a
+ * freshly-answered `QueryOutcome` exists in state (via AnalystQuery's
+ * `onQueryComplete`).
+ *
+ * That evidence is only available for queries answered *this session*: the trace store
+ * persists `TraceStep`s but never a query's evidence panel, and old queries are not
+ * re-answerable (no endpoint returns a stored `QueryOutcome`). For a trace selected from
+ * the "Recent queries" list that wasn't just answered in this tab, `evidencePanel` is
+ * empty and each provenance id falls back to a partial render — the source id and
+ * timestamp parsed straight out of the id string — with a note that the full record
+ * isn't available. Closing that gap for real needs a backend surface this file's scope
+ * didn't include changing (e.g. persisting evidence_panel rows alongside TraceStep in
+ * the trace store, or a `GET /api/query/{query_id}` outcome-replay endpoint).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getTrace } from "@shared/api";
-import { formatClock, formatDuration, shortId } from "./format";
+import type { EvidencePanelRow, TraceTreeNode } from "@shared/types";
+import { formatClock, formatDuration, formatTimeAgo, freshnessVar, shortId } from "./format";
 import type { TraceListRow } from "./useConsoleData";
 
-interface TraceStepRecord {
-  step_id: string;
-  query_id: string;
-  parent_id: string | null;
-  agent: string;
-  kind: string;
-  tool: string | null;
-  args: Record<string, unknown>;
-  result_digest: string;
-  provenance_ids: string[];
-  duration_ms: number;
-  ts: string;
-  why: string | null;
-  ok: boolean;
-  error: string | null;
-}
-
-interface TraceNode {
-  step: TraceStepRecord;
-  children: TraceNode[];
+/** Recovers the two halves of a provenance id string when no EvidencePanelRow is
+ *  available to join against — the degraded-but-still-useful fallback render. */
+function parseProvenanceId(id: string): { sourceId: string; timestamp: string | null } {
+  const idx = id.lastIndexOf("@");
+  if (idx === -1) return { sourceId: id, timestamp: null };
+  return { sourceId: id.slice(0, idx), timestamp: id.slice(idx + 1) };
 }
 
 const KIND_VAR: Record<string, string> = {
@@ -59,10 +66,15 @@ interface TraceInspectorProps {
   traces: TraceListRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** The selected query's own evidence_panel rows, when this session has them (see
+   *  the module docstring for when that is / isn't the case). Used only to join
+   *  against each step's provenance_ids — never rendered as its own table here, the
+   *  analyst query tab already does that. */
+  evidencePanel?: EvidencePanelRow[] | null;
 }
 
-export default function TraceInspector({ traces, selectedId, onSelect }: TraceInspectorProps) {
-  const [detail, setDetail] = useState<TraceNode[] | null>(null);
+export default function TraceInspector({ traces, selectedId, onSelect, evidencePanel }: TraceInspectorProps) {
+  const [detail, setDetail] = useState<TraceTreeNode[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +88,7 @@ export default function TraceInspector({ traces, selectedId, onSelect }: TraceIn
     setError(null);
     getTrace(selectedId)
       .then((res) => {
-        if (!cancelled) setDetail(res.steps as unknown as TraceNode[]);
+        if (!cancelled) setDetail(res.steps);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -88,6 +100,12 @@ export default function TraceInspector({ traces, selectedId, onSelect }: TraceIn
       cancelled = true;
     };
   }, [selectedId]);
+
+  const evidenceByProvenanceId = useMemo(() => {
+    const map = new Map<string, EvidencePanelRow>();
+    for (const row of evidencePanel ?? []) map.set(row.provenance_id, row);
+    return map;
+  }, [evidencePanel]);
 
   return (
     <div className="trace-inspector">
@@ -116,7 +134,12 @@ export default function TraceInspector({ traces, selectedId, onSelect }: TraceIn
         {detail && (
           <ol className="trace-timeline">
             {detail.map((node) => (
-              <TraceStepView key={node.step.step_id} node={node} depth={0} />
+              <TraceStepView
+                key={node.step.step_id}
+                node={node}
+                depth={0}
+                evidenceByProvenanceId={evidenceByProvenanceId}
+              />
             ))}
           </ol>
         )}
@@ -125,7 +148,15 @@ export default function TraceInspector({ traces, selectedId, onSelect }: TraceIn
   );
 }
 
-function TraceStepView({ node, depth }: { node: TraceNode; depth: number }) {
+function TraceStepView({
+  node,
+  depth,
+  evidenceByProvenanceId,
+}: {
+  node: TraceTreeNode;
+  depth: number;
+  evidenceByProvenanceId: Map<string, EvidencePanelRow>;
+}) {
   const { step } = node;
   return (
     <li className="trace-step" style={{ marginLeft: depth * 16 }}>
@@ -147,16 +178,53 @@ function TraceStepView({ node, depth }: { node: TraceNode; depth: number }) {
         <details className="trace-step__provenance">
           <summary>{step.provenance_ids.length} provenance record(s)</summary>
           <ul>
-            {step.provenance_ids.map((id) => (
-              <li key={id}>{id}</li>
-            ))}
+            {step.provenance_ids.map((id) => {
+              const row = evidenceByProvenanceId.get(id);
+              if (row) {
+                return (
+                  <li key={id} className="trace-step__provenance-row">
+                    <span className="trace-step__provenance-source">
+                      {row.source_name}
+                      <span className="trace-step__provenance-authority"> ({row.authority})</span>
+                    </span>
+                    <span className="trace-step__provenance-value">
+                      {row.variable}: {row.display}
+                    </span>
+                    <span className="trace-step__provenance-meta">
+                      {row.resolution} · acquired {formatTimeAgo(row.acquired_at)}
+                    </span>
+                    <span className="badge" style={{ background: freshnessVar(row.freshness) }}>
+                      {row.freshness}
+                    </span>
+                    {row.is_derived && <span className="badge badge--outline">derived</span>}
+                  </li>
+                );
+              }
+              const { sourceId, timestamp } = parseProvenanceId(id);
+              return (
+                <li key={id} className="trace-step__provenance-row trace-step__provenance-row--partial">
+                  <span className="trace-step__provenance-source">{sourceId}</span>
+                  <span className="trace-step__provenance-meta">
+                    {timestamp ? formatTimeAgo(timestamp) : "—"}
+                  </span>
+                  <span className="trace-step__provenance-note">
+                    full record unavailable — not answered this session
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </details>
       )}
       {node.children.length > 0 && (
         <ol className="trace-timeline trace-timeline--nested">
           {node.children.map((child) => (
-            <TraceStepView key={child.step.step_id} node={child} depth={depth + 1} />
+            <TraceStepView
+              key={child.step.step_id}
+              node={child}
+              depth={depth + 1}
+              evidenceByProvenanceId={evidenceByProvenanceId}
+            />
           ))}
         </ol>
       )}

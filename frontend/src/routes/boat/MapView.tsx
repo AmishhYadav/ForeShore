@@ -12,13 +12,36 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { RegionInfo } from "@shared/types";
+import { getHazards, getPfzDerived, getPfzOfficial } from "@shared/api";
+import type { HazardsPayload, PfzDerivedPayload, PfzOfficialPayload, RegionInfo } from "@shared/types";
 import { basemapCenterLngLat, severityColor, toLngLat } from "./format";
 import type { OwnPosition } from "./useOwnPosition";
 
 // Mirrors index.css's --ink-800 / --ink-700 — maplibre paint properties need literal
 // colour values, not CSS custom properties, so these are duplicated deliberately.
 const OCEAN_BG = "#0f2b40";
+
+// Mirrors index.css's --pfz-official / --pfz-derived / --hazard-track — same reasoning
+// as OCEAN_BG above (maplibre paint properties need literal colour values). Deliberately
+// distinct from every geofence-severity colour and from the route line's --accent, so
+// "official PFZ line", "derived PFZ zone" and "cyclone track" never read as the same
+// thing as each other or as an existing layer (CLAUDE.md: never present a derived
+// product as the official INCOIS advisory).
+const PFZ_OFFICIAL_COLOR = "#2dd4bf";
+const PFZ_DERIVED_COLOR = "#7c93ff";
+const HAZARD_FILL_COLOR = "#e0a815"; // == index.css --severity-hazard: same meaning as the
+// geofence layer's dynamic HAZARD_EXCLUSION class, so it deliberately reuses that colour.
+const HAZARD_TRACK_COLOR = "#ff5da2";
+
+const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/** A generous small-boat-scale bbox around the vessel's own position (CLAUDE.md's 0–50 nm
+ * small motorised boat class) for the derived-PFZ / hazard queries — "around the vessel",
+ * not the whole region. ~0.6° ≈ 65 km padding. */
+function ownPositionBbox(lat: number, lon: number): [number, number, number, number] {
+  const pad = 0.6;
+  return [lon - pad, lat - pad, lon + pad, lat + pad];
+}
 
 function buildWmsTileUrl(wmsUrl: string, layer: string): string {
   const params = new URLSearchParams({
@@ -94,10 +117,17 @@ export function MapView({
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const geofenceLayersAddedRef = useRef(false);
   const routeLayerAddedRef = useRef(false);
+  const pfzOfficialLayerAddedRef = useRef(false);
+  const pfzDerivedLayerAddedRef = useRef(false);
+  const hazardLayerAddedRef = useRef(false);
+  const hazardTrackLayerAddedRef = useRef(false);
   const centeredOnceRef = useRef(false);
   const bhuvanFailedRef = useRef(false);
   const [basemapFailed, setBasemapFailed] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [pfzOfficial, setPfzOfficial] = useState<PfzOfficialPayload | null>(null);
+  const [pfzDerived, setPfzDerived] = useState<PfzDerivedPayload | null>(null);
+  const [hazards, setHazards] = useState<HazardsPayload | null>(null);
 
   // -- create the map once region config is known --------------------------------------
   useEffect(() => {
@@ -190,6 +220,10 @@ export function MapView({
       markerRef.current = null;
       geofenceLayersAddedRef.current = false;
       routeLayerAddedRef.current = false;
+      pfzOfficialLayerAddedRef.current = false;
+      pfzDerivedLayerAddedRef.current = false;
+      hazardLayerAddedRef.current = false;
+      hazardTrackLayerAddedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region]);
@@ -291,11 +325,198 @@ export function MapView({
     else map.once("idle", apply);
   }, [mapReady, route]);
 
+  // -- fetch PFZ official/derived + hazards around the vessel's own position -----------
+  // Self-contained fetch, mirroring the fetch-and-refresh lifecycle BoatApp.tsx already
+  // uses for geofences (fetch on mount / on the relevant change, .catch -> console.warn,
+  // leave the layer empty rather than erroring) — kept local to this component since
+  // this data is map-only and not needed elsewhere in the tree.
+  useEffect(() => {
+    if (!position.ready) return;
+    let cancelled = false;
+
+    getPfzOfficial(position.lat, position.lon)
+      .then((res) => {
+        if (!cancelled) setPfzOfficial(res.payload);
+      })
+      .catch((err) => console.warn("[MapView] failed to fetch official PFZ line:", err));
+
+    const bbox = ownPositionBbox(position.lat, position.lon);
+    getPfzDerived({ bbox })
+      .then((res) => {
+        if (!cancelled) setPfzDerived(res.payload);
+      })
+      .catch((err) => console.warn("[MapView] failed to fetch derived PFZ zones:", err));
+
+    getHazards({ bbox })
+      .then((res) => {
+        if (!cancelled) setHazards(res.payload);
+      })
+      .catch((err) => console.warn("[MapView] failed to fetch hazards:", err));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [position.ready, position.lat, position.lon]);
+
+  // -- official PFZ line: solid, one consistent colour ------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const data: GeoJSON.FeatureCollection = pfzOfficial?.geometry
+      ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: pfzOfficial.geometry }] }
+      : EMPTY_FC;
+
+    const apply = () => {
+      if (!pfzOfficialLayerAddedRef.current) {
+        map.addSource("pfz-official", { type: "geojson", data });
+        map.addLayer({
+          id: "pfz-official-line",
+          type: "line",
+          source: "pfz-official",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": PFZ_OFFICIAL_COLOR, "line-width": 3, "line-opacity": 0.95 },
+        });
+        pfzOfficialLayerAddedRef.current = true;
+      } else {
+        (map.getSource("pfz-official") as maplibregl.GeoJSONSource | undefined)?.setData(data);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("idle", apply);
+  }, [mapReady, pfzOfficial]);
+
+  // -- derived PFZ zones: fill + dashed border, deliberately unlike the solid official
+  // line above — CLAUDE.md: never presented as the official INCOIS advisory -------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const data = pfzDerived?.zones ?? EMPTY_FC;
+
+    const apply = () => {
+      if (!pfzDerivedLayerAddedRef.current) {
+        map.addSource("pfz-derived", { type: "geojson", data });
+        map.addLayer({
+          id: "pfz-derived-fill",
+          type: "fill",
+          source: "pfz-derived",
+          paint: { "fill-color": PFZ_DERIVED_COLOR, "fill-opacity": 0.18 },
+        });
+        map.addLayer({
+          id: "pfz-derived-line",
+          type: "line",
+          source: "pfz-derived",
+          paint: { "line-color": PFZ_DERIVED_COLOR, "line-width": 1.5, "line-dasharray": [2, 2], "line-opacity": 0.9 },
+        });
+        pfzDerivedLayerAddedRef.current = true;
+      } else {
+        (map.getSource("pfz-derived") as maplibregl.GeoJSONSource | undefined)?.setData(data);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("idle", apply);
+  }, [mapReady, pfzDerived]);
+
+  // -- hazard exclusion polygons + cyclone track: two separate layers, deliberately
+  // distinct styles — PLAN.md Phase 6 / CLAUDE.md: "cyclone track and cone overlaid" as
+  // two distinct visual things, not one -----------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const polyData: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: hazards?.polygons ?? [] };
+    const trackData: GeoJSON.FeatureCollection = hazards?.cyclone_track ?? EMPTY_FC;
+
+    const apply = () => {
+      if (!hazardLayerAddedRef.current) {
+        map.addSource("hazard-polygons", { type: "geojson", data: polyData });
+        map.addLayer({
+          id: "hazard-fill",
+          type: "fill",
+          source: "hazard-polygons",
+          paint: { "fill-color": HAZARD_FILL_COLOR, "fill-opacity": 0.25 },
+        });
+        map.addLayer({
+          id: "hazard-line",
+          type: "line",
+          source: "hazard-polygons",
+          paint: { "line-color": HAZARD_FILL_COLOR, "line-width": 2, "line-opacity": 0.9 },
+        });
+        hazardLayerAddedRef.current = true;
+      } else {
+        (map.getSource("hazard-polygons") as maplibregl.GeoJSONSource | undefined)?.setData(polyData);
+      }
+
+      if (!hazardTrackLayerAddedRef.current) {
+        map.addSource("hazard-track", { type: "geojson", data: trackData });
+        map.addLayer({
+          id: "hazard-track-line",
+          type: "line",
+          source: "hazard-track",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": HAZARD_TRACK_COLOR, "line-width": 2.5, "line-dasharray": [3, 1.5], "line-opacity": 0.95 },
+        });
+        hazardTrackLayerAddedRef.current = true;
+      } else {
+        (map.getSource("hazard-track") as maplibregl.GeoJSONSource | undefined)?.setData(trackData);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("idle", apply);
+  }, [mapReady, hazards]);
+
+  const officialNote = !pfzOfficial
+    ? "Loading official PFZ line…"
+    : pfzOfficial.geometry
+      ? `Official INCOIS PFZ line — advisory dated ${pfzOfficial.advisory_date ?? "unknown date"}`
+      : "No official PFZ line published for this sector today.";
+
+  const derivedNote = !pfzDerived
+    ? "Loading indicative fishing-zone estimate…"
+    : `${pfzDerived.disclaimer}${
+        !pfzDerived.chlorophyll_available && pfzDerived.chlorophyll_reason ? ` (${pfzDerived.chlorophyll_reason})` : ""
+      }`;
+
+  const hazardNote = !hazards
+    ? "Checking for active cyclone hazard…"
+    : hazards.no_active_hazard
+      ? "No active cyclone hazard in this area."
+      : "Active cyclone hazard — exclusion area and track shown on the map.";
+
   return (
-    <div className="map-view">
-      <div ref={containerRef} className="map-view__canvas" />
-      {!region ? <div className="map-view__overlay">Loading chart…</div> : null}
-      {basemapFailed ? <div className="map-view__badge">Chart imagery unavailable — showing plain chart</div> : null}
+    <div className="map-view-wrap">
+      <div className="map-view">
+        <div ref={containerRef} className="map-view__canvas" />
+        {!region ? <div className="map-view__overlay">Loading chart…</div> : null}
+        {basemapFailed ? <div className="map-view__badge">Chart imagery unavailable — showing plain chart</div> : null}
+        <div className="map-view__legend">
+          <div className="map-view__legend-item">
+            <span className="map-view__swatch" style={{ background: PFZ_OFFICIAL_COLOR }} />
+            Official PFZ line
+          </div>
+          <div className="map-view__legend-item">
+            <span className="map-view__swatch map-view__swatch--derived" style={{ borderColor: PFZ_DERIVED_COLOR }} />
+            Derived PFZ (indicative)
+          </div>
+          <div className="map-view__legend-item">
+            <span className="map-view__swatch map-view__swatch--fill" style={{ background: HAZARD_FILL_COLOR }} />
+            Hazard exclusion
+          </div>
+          <div className="map-view__legend-item">
+            <span className="map-view__swatch" style={{ background: HAZARD_TRACK_COLOR }} />
+            Cyclone track
+          </div>
+        </div>
+      </div>
+      <div className="map-view__notes">
+        <div className="map-view__note">{officialNote}</div>
+        <div className="map-view__note map-view__note--derived">{derivedNote}</div>
+        <div className="map-view__note">{hazardNote}</div>
+      </div>
     </div>
   );
 }

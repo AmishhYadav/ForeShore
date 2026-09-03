@@ -31,6 +31,14 @@
   --severity-restricted: #c77bd6;
   --severity-advisory: #4fa3d1;
 
+  /* Map-layer colours for tool 7/8/12 passthroughs (PFZ official/derived, hazard/track).
+     Deliberately distinct from every colour above and from each other — CLAUDE.md: never
+     let a derived product read as the official INCOIS advisory, and PLAN.md Phase 6 wants
+     cyclone track and cone as two distinct visual things, not one. */
+  --pfz-official: #2dd4bf;
+  --pfz-derived: #7c93ff;
+  --hazard-track: #ff5da2;
+
   --font-sans: "Inter", "Noto Sans Tamil", system-ui, -apple-system, sans-serif;
 
   color-scheme: dark;

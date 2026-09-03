@@ -40,7 +40,10 @@ interface RuntimeEvidenceRow {
 }
 
 interface AnalystQueryProps {
-  onQueryComplete: (queryId: string) => void;
+  /** Fires with the full outcome (not just the id) so the parent can cache
+   *  `payloads.evidence_panel` for the trace inspector's provenance join — see
+   *  TraceInspector.tsx's module docstring. */
+  onQueryComplete: (outcome: QueryOutcome) => void;
   onViewTrace: (queryId: string) => void;
 }
 
@@ -59,7 +62,7 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
     try {
       const res = await postQuery({ text: trimmed, surface: "console", use_model: true });
       setOutcome(res);
-      onQueryComplete(res.query_id);
+      onQueryComplete(res);
     } catch (err) {
       if (err instanceof ApiError) {
         setError(`API ${err.status}: ${JSON.stringify(err.body)}`);

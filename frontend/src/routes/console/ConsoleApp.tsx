@@ -18,22 +18,50 @@ import AlertQueue from "./AlertQueue";
 import TraceInspector from "./TraceInspector";
 import AnalystQuery from "./AnalystQuery";
 import ArchitecturePanel from "./ArchitecturePanel";
+import RegionSwitcher from "./RegionSwitcher";
 import { useConsoleData } from "./useConsoleData";
 import { formatTimeAgo } from "./format";
+import type { EvidencePanelRow, QueryOutcome } from "@shared/types";
 
-type Tab = "query" | "trace" | "architecture";
+type Tab = "query" | "trace" | "architecture" | "region";
+
+/** RegionInfo.basemap is an opaque `Record<string, unknown>` in shared/types.ts (a live
+ * backend config blob, not enumerated field-by-field there) — this narrows just the two
+ * fields FleetMap's optional `center`/`zoom` recentre prop needs, mirroring FleetMap.tsx's
+ * own local `Basemap` interface rather than exporting/importing one across files. */
+interface BasemapCenterZoom {
+  center?: [number, number];
+  zoom?: number;
+}
 
 export default function ConsoleApp() {
   const data = useConsoleData();
   const [tab, setTab] = useState<Tab>("query");
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  // Evidence panels are only ever produced by a fresh POST /api/query response, so this
+  // is a session-local cache keyed by query_id — populated as AnalystQuery answers
+  // queries, read by TraceInspector to join provenance ids against real records. See
+  // TraceInspector.tsx's module docstring for why older/persisted traces won't have an
+  // entry here.
+  const [evidenceByQuery, setEvidenceByQuery] = useState<Record<string, EvidencePanelRow[]>>({});
 
   function viewTrace(queryId: string) {
     setSelectedTraceId(queryId);
     setTab("trace");
   }
 
+  function handleQueryComplete(outcome: QueryOutcome) {
+    data.refreshTraces();
+    setSelectedTraceId(outcome.query_id);
+    setEvidenceByQuery((prev) => ({ ...prev, [outcome.query_id]: outcome.payloads.evidence_panel }));
+  }
+
   const activeAlerts = data.alerts.filter((a) => a.acknowledged_at == null).length;
+  // Recentre target for FleetMap after a region swap — reactive to data.region because
+  // useConsoleData.swapRegion already calls setRegion internally, so this recomputes and
+  // re-renders on its own the moment RegionSwitcher's onSwap resolves; no extra plumbing
+  // needed between RegionSwitcher and the map.
+  const basemap = data.region?.basemap as BasemapCenterZoom | undefined;
 
   return (
     <div className="console-shell">
@@ -64,7 +92,13 @@ export default function ConsoleApp() {
 
       <main className="console-main">
         <section className="console-map-pane" aria-label="Fleet map">
-          <FleetMap region={data.region} vessels={data.vessels} geofences={data.geofences} />
+          <FleetMap
+            region={data.region}
+            vessels={data.vessels}
+            geofences={data.geofences}
+            center={basemap?.center}
+            zoom={basemap?.zoom}
+          />
         </section>
 
         <section className="console-side-pane">
@@ -95,25 +129,30 @@ export default function ConsoleApp() {
               >
                 Architecture
               </button>
+              <button
+                type="button"
+                className={`console-tabbar__btn${tab === "region" ? " console-tabbar__btn--active" : ""}`}
+                onClick={() => setTab("region")}
+              >
+                Region swap
+              </button>
             </nav>
             <div className="console-tabpanel">
               {tab === "query" && (
-                <AnalystQuery
-                  onQueryComplete={(queryId) => {
-                    data.refreshTraces();
-                    setSelectedTraceId(queryId);
-                  }}
-                  onViewTrace={viewTrace}
-                />
+                <AnalystQuery onQueryComplete={handleQueryComplete} onViewTrace={viewTrace} />
               )}
               {tab === "trace" && (
                 <TraceInspector
                   traces={data.traces}
                   selectedId={selectedTraceId}
                   onSelect={setSelectedTraceId}
+                  evidencePanel={selectedTraceId ? evidenceByQuery[selectedTraceId] : null}
                 />
               )}
               {tab === "architecture" && <ArchitecturePanel specialists={data.architecture} />}
+              {tab === "region" && (
+                <RegionSwitcher currentRegion={data.region} onSwap={data.swapRegion} />
+              )}
             </div>
           </div>
         </section>

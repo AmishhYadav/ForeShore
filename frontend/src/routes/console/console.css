@@ -529,7 +529,42 @@
 .trace-step__provenance ul {
   margin: 4px 0 0 16px;
   padding: 0;
+  list-style: none;
+}
+.trace-step__provenance-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--ink-800);
+  font-family: inherit;
+}
+.trace-step__provenance-row:last-child {
+  border-bottom: none;
+}
+.trace-step__provenance-row--partial {
+  color: var(--ink-500);
+  font-style: italic;
+}
+.trace-step__provenance-source {
+  font-weight: 700;
+  color: var(--ink-50);
+}
+.trace-step__provenance-authority {
+  font-weight: 400;
+  color: var(--ink-100);
+}
+.trace-step__provenance-value {
   font-family: ui-monospace, monospace;
+  color: var(--accent);
+}
+.trace-step__provenance-meta,
+.trace-step__provenance-note {
+  color: var(--ink-100);
+}
+.trace-step__provenance-note {
+  font-size: 0.62rem;
 }
 
 /* -- analyst query -------------------------------------------------------------------- */
@@ -709,6 +744,97 @@
   margin-top: 4px;
 }
 
+/* -- region switcher -------------------------------------------------------------------- */
+
+.region-switcher {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.region-switcher__intro {
+  font-size: 0.8rem;
+  color: var(--ink-100);
+  line-height: 1.5;
+  margin: 0;
+}
+.region-switcher__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.region-switcher__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--ink-900);
+  border: 1px solid var(--ink-700);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink-50);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.region-switcher__option:not(:disabled):hover {
+  border-color: var(--accent);
+}
+.region-switcher__option:disabled {
+  cursor: default;
+}
+.region-switcher__option--current {
+  background: var(--ink-800);
+  border-color: var(--verdict-go);
+}
+.region-switcher__option-label {
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+.region-switcher__option-status {
+  font-size: 0.68rem;
+  color: var(--ink-100);
+  white-space: nowrap;
+}
+.region-switcher__option--current .region-switcher__option-status {
+  color: var(--verdict-go);
+  font-weight: 700;
+}
+.region-switcher__loading {
+  font-size: 0.78rem;
+  color: var(--ink-100);
+  font-style: italic;
+}
+.region-switcher__proof {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--ink-900);
+  border: 1px solid var(--ink-700);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.region-switcher__proof-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.72rem;
+  color: var(--ink-100);
+  flex-wrap: wrap;
+}
+.region-switcher__limitation {
+  font-size: 0.74rem;
+  color: var(--verdict-caution);
+  background: var(--verdict-caution-bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  margin: 0;
+}
+
 /* -- fleet map ------------------------------------------------------------------------ */
 
 .fm-wrap {
@@ -784,7 +910,9 @@
   gap: 10px;
   font-size: 0.7rem;
   z-index: 5;
-  max-width: 190px;
+  max-width: 230px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
   color: var(--ink-50);
 }
 .fm-legend__heading {
@@ -807,6 +935,17 @@
   border-radius: 3px;
   display: inline-block;
   flex: 0 0 auto;
+}
+.fm-legend__swatch--dashed {
+  background: transparent;
+  border: 1.5px dashed;
+}
+.fm-legend__note {
+  font-size: 0.63rem;
+  line-height: 1.35;
+  color: var(--ink-100);
+  opacity: 0.85;
+  margin-top: 2px;
 }
 
 .fm-vessel-marker {

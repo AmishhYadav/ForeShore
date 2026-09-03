@@ -23,6 +23,7 @@ import {
   getGeofencesGeoJson,
   getRegion,
   getTraces,
+  setActiveRegion,
 } from "@shared/api";
 import { AlertSocket } from "@shared/ws";
 import type { Alert, ArchitectureSpecialist, RegionInfo, VesselState } from "@shared/types";
@@ -107,6 +108,28 @@ export function useConsoleData() {
   const ack = useCallback(async (alertId: string, by: string) => {
     const updated = await ackAlert(alertId, by);
     setAlerts((prev) => upsertAlert(prev, updated));
+  }, []);
+
+  // Region swap — PLAN.md Phase 7 item 3 / RegionSwitcher.tsx. Flips the backend's
+  // process-wide active region, then re-fetches the two things that visibly depend on it
+  // (region info and the geofence layer, explicitly passing region_id even though the
+  // backend now defaults to it too, per the brief). Deliberately does NOT touch
+  // vessels/alerts — the simulated fleet stays in Palk Bay regardless of the active
+  // region, a known and intentional scope boundary (see RegionSwitcher.tsx). Propagates
+  // any failure to the caller (RegionSwitcher) rather than swallowing it, so the UI can
+  // show a real error state instead of silently no-op'ing.
+  const swapRegion = useCallback(async (regionId: string) => {
+    const newRegion = await setActiveRegion(regionId);
+    setRegion(newRegion);
+    try {
+      const geoRes = await getGeofencesGeoJson(undefined, regionId);
+      setGeofences(geoRes);
+    } catch {
+      // Non-fatal: the region swap itself succeeded even if the geofence re-fetch
+      // failed — leave the last-known geofence layer on screen rather than blanking it,
+      // same degrade-gracefully pattern as refreshFleet/refreshAlerts above.
+    }
+    return newRegion;
   }, []);
 
   // -- initial paint ----------------------------------------------------------------
@@ -211,5 +234,6 @@ export function useConsoleData() {
     loadError,
     ack,
     refreshTraces,
+    swapRegion,
   };
 }
