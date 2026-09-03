@@ -199,6 +199,42 @@ def resolve_time(text: str, now: datetime | None = None) -> datetime:
     return base
 
 
+def resolve_scenario_times(text: str, now: datetime | None = None) -> tuple[datetime, datetime] | None:
+    """Two explicit departure times named in one utterance, earliest first.
+
+    PLAN.md Phase 7 item 4, verbatim: *"what if I leave at 04:00 instead of 06:00" as a
+    re-plan over the same evidence with a diffed verdict.* This is the trigger for that
+    comparison — deliberately narrow. It fires only when the utterance names **two**
+    explicit ``HH:MM`` times, the same shape as the PS's own example, not on "earlier"/
+    "later" cues alone (``INTENT_CUES["scenario"]`` still classifies those utterances for
+    the trace's ``intents`` list; there just isn't a second instant to compare against,
+    so the normal single-answer path is exactly right for them). One time, or none, is
+    not a scenario — it is answered the ordinary way.
+
+    Both times are anchored to the same reference day, taken from whichever
+    ``TIME_CUES`` phrase appears in the text ("tomorrow", "tonight", ...), defaulting to
+    today — the same anchor :func:`resolve_time` itself would use, so a scenario
+    comparison and a plain query about the same utterance never disagree about *which
+    day* is meant, only which hour.
+    """
+    now = now or utcnow()
+    t = normalise(text).lower()
+    matches = list(_HOUR.finditer(t))
+    if len(matches) < 2:
+        return None
+    base = now
+    for cue, delta in TIME_CUES:
+        if cue in t:
+            base = now + delta
+            break
+    times = [
+        base.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+        for m in matches[:2]
+    ]
+    times.sort()
+    return (times[0], times[1])
+
+
 def _step(tool: str, why: str, args: dict[str, Any], optional: bool = False) -> PlanStep:
     return PlanStep(
         specialist=specialist_for_tool(tool) or "MarineDataDiscovery",
@@ -325,4 +361,7 @@ def plan(
     )
 
 
-__all__ = ["Plan", "PlanStep", "plan", "classify", "resolve_time", "INTENT_CUES", "SAFETY_SPINE"]
+__all__ = [
+    "Plan", "PlanStep", "plan", "classify", "resolve_time", "resolve_scenario_times",
+    "INTENT_CUES", "SAFETY_SPINE",
+]

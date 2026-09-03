@@ -216,6 +216,30 @@ export interface QueryOutcome {
   missing: string[];
   duration_ms: number;
   architecture: ArchitectureSpecialist[];
+  /** PLAN.md Phase 7 item 4 — populated only when the question named two explicit
+   * departure times ("what if I leave at 04:00 instead of 06:00") and the request
+   * carried no explicit `when`. `null` on every ordinary answer. */
+  scenario: ScenarioComparison | null;
+}
+
+/** One side of a scenario comparison — orchestrator.py's ScenarioOption.to_dict(). */
+export interface ScenarioOption {
+  label: string;
+  when: string;
+  /** A complete, independent QueryOutcome for this departure time — recursive, but
+   * always has its own `scenario` as `null` (a scenario option is never itself a
+   * scenario). */
+  outcome: QueryOutcome;
+}
+
+/** orchestrator.py's ScenarioComparison.to_dict(). */
+export interface ScenarioComparison {
+  /** Always exactly 2, earlier departure first. */
+  options: ScenarioOption[];
+  /** Plain-language bullets of what actually changed between the two options. */
+  differences: string[];
+  /** Index into `options` of the more permissive still-actionable choice. */
+  recommended_index: number;
 }
 
 export interface Alert {

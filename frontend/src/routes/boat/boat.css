@@ -825,3 +825,89 @@
     font-size: 30px;
   }
 }
+
+/* -- scenario compare (PLAN.md Phase 7 "explore scenarios") ----------------------------- */
+
+.scenario-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scenario-compare__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scenario-compare__option {
+  position: relative;
+  border-radius: 20px;
+  border: 2px solid var(--ink-600);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.scenario-compare__option--recommended {
+  border-width: 3px;
+}
+
+.scenario-compare__badge {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--accent);
+  color: var(--ink-950);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.scenario-compare__heading {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink-50);
+}
+
+.scenario-compare__level {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.scenario-compare__option-headline {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--ink-50);
+  line-height: 1.2;
+}
+
+.scenario-compare__lead {
+  font-size: 14px;
+  color: var(--ink-100);
+  line-height: 1.4;
+}
+
+.scenario-compare__differences {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-100);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (min-width: 640px) {
+  .scenario-compare__grid {
+    flex-direction: row;
+  }
+
+  .scenario-compare__option {
+    flex: 1;
+  }
+}

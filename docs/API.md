@@ -74,7 +74,8 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
   "specialists_used": ["OceanAnalytics", "RiskAssessment"],
   "missing": ["incois_osf_mwh"],
   "duration_ms": 3740,
-  "architecture": [ { "name", "role", "ps_capability", "tools" } ]
+  "architecture": [ { "name", "role", "ps_capability", "tools" } ],
+  "scenario": null                    // see "Scenario exploration" below
 }
 ```
 
@@ -82,6 +83,33 @@ The UI must render `evidence_panel` under every answer, must show `downgraded_fr
 whenever `ceiling_applied` is true, and must show the `handoff` whenever the level is
 `DO_NOT_ADVISE`. A `DO_NOT_ADVISE` is a designed outcome, not an error state — never
 render it as a failure.
+
+#### Scenario exploration (PLAN.md Phase 7 item 4)
+
+When the question text names **two** explicit `HH:MM` departure times and no explicit
+`when` was sent in the request — e.g. *"what if I leave at 04:00 instead of 06:00"*, the
+PS's own example — `scenario` is populated instead of staying `null`:
+
+```jsonc
+"scenario": {
+  "options": [
+    { "label": "Leave at 04:00", "when": "2026-09-04T04:00:00+00:00",
+      "outcome": { /* a full QueryOutcome, exactly this same shape, recursively */ } },
+    { "label": "Leave at 06:00", "when": "2026-09-04T06:00:00+00:00",
+      "outcome": { /* … */ } }
+  ],
+  "differences": ["…"],               // plain-language bullets of what actually changed
+  "recommended_index": 0              // which option, 0 or 1
+}
+```
+
+Both options are complete, independent answers — same tools, same ceiling, same
+evidence discipline as an ordinary query, run twice, never an LLM asked to imagine the
+difference. The top-level `verdict`/`text`/`evidence_panel` of the response *is*
+`scenario.options[0].outcome`'s own — so a client that ignores `scenario` entirely still
+renders a correct answer for the earlier of the two times. A request that supplies an
+explicit `when` never triggers this — an explicit instant always means "answer for
+exactly this", not an unrequested comparison.
 
 ### `POST /api/route`
 

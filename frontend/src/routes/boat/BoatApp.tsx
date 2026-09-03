@@ -26,6 +26,7 @@ import {
 import type { CachedDecision } from "@shared/offline";
 import type { QueryOutcome, RegionInfo } from "@shared/types";
 import { VerdictCard } from "./VerdictCard";
+import { ScenarioCompare } from "./ScenarioCompare";
 import { EvidencePanel } from "./EvidencePanel";
 import { VoiceInput } from "./VoiceInput";
 import { MapView } from "./MapView";
@@ -243,15 +244,19 @@ export default function BoatApp() {
       </header>
 
       <main className="boat-app__main">
-        <VerdictCard
-          verdict={activeOutcome?.verdict ?? null}
-          copy={activeCopy}
-          labels={activeLabels}
-          stale={offline}
-          staleNotice={staleNotice}
-          emptyHeadline={emptyHeadline}
-          emptyMessage={emptyMessage}
-        />
+        {activeOutcome?.scenario ? (
+          <ScenarioCompare scenario={activeOutcome.scenario} labels={activeLabels} />
+        ) : (
+          <VerdictCard
+            verdict={activeOutcome?.verdict ?? null}
+            copy={activeCopy}
+            labels={activeLabels}
+            stale={offline}
+            staleNotice={staleNotice}
+            emptyHeadline={emptyHeadline}
+            emptyMessage={emptyMessage}
+          />
+        )}
 
         <AlertBanner alerts={proximity.alerts} offline={offline} hasData={proximity.hasData} />
 

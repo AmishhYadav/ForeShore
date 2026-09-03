@@ -31,19 +31,19 @@ submission rests on them:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Iterable, Literal, Sequence
 from uuid import uuid4
 
 from ..config import RegionConfig, load_region
-from ..models import AgentAnswer, Observation, TraceStep, ToolResult, Verdict
+from ..models import AgentAnswer, Observation, TraceStep, ToolResult, Verdict, is_more_permissive
 from ..store.traces import TraceStore, digest, new_step
 from ..tools import registry as tool_registry
 from ..tools.verdict_tools import clear_evidence, last_outcome, record_evidence
 from . import specialists
 from .language import detect
-from .planner import Plan, plan as build_plan
+from .planner import Plan, plan as build_plan, resolve_scenario_times
 from .runtime import AgentRuntime, ScriptedClient
 from .synthesis import compose
 
@@ -92,6 +92,9 @@ class QueryOutcome:
     duration_ms: int
     missing: list[str] = field(default_factory=list)
     specialists_used: list[str] = field(default_factory=list)
+    #: Populated only when the utterance itself named two explicit departure times (PLAN.md
+    #: Phase 7 item 4) — see :func:`_build_scenario`. ``None`` on every ordinary answer.
+    scenario: "ScenarioComparison | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +104,41 @@ class QueryOutcome:
             "missing": self.missing,
             "specialists_used": self.specialists_used,
             "architecture": specialists.architecture(),
+            "scenario": self.scenario.to_dict() if self.scenario else None,
+        }
+
+
+@dataclass
+class ScenarioOption:
+    """One side of a scenario comparison: a full, independent answer for one candidate
+    departure time, carrying its own verdict, evidence and trace exactly as if it had
+    been asked on its own."""
+
+    label: str
+    when: datetime
+    outcome: QueryOutcome
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "when": self.when.isoformat(), "outcome": self.outcome.to_dict()}
+
+
+@dataclass
+class ScenarioComparison:
+    """"What if I leave at 04:00 instead of 06:00" (PLAN.md Phase 7 item 4), answered as
+    a re-plan of the same question at each named time, never as an LLM guess about how
+    the two might differ — every difference below is read off the two real verdicts."""
+
+    options: list[ScenarioOption]      # exactly 2, earlier departure first
+    differences: list[str]
+    #: Index into ``options`` of the more permissive still-actionable choice; the earlier
+    #: time wins a tie, since waiting buys nothing when the outcome is identical.
+    recommended_index: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "options": [o.to_dict() for o in self.options],
+            "differences": self.differences,
+            "recommended_index": self.recommended_index,
         }
 
 
@@ -147,6 +185,18 @@ def answer(
     region = region or load_region(query.region_id)
     query_id = query.query_id or str(uuid4())
     language = query.language or detect(query.text, candidates=region.languages)
+
+    # A caller-supplied `when` always means "answer for exactly this instant" — only an
+    # inferred-from-text time is ever ambiguous enough to be two candidate times at once.
+    # This also stops the recursive sub-answers below (which always set `when` explicitly)
+    # from re-triggering scenario detection on their own text.
+    if query.when is None:
+        scenario_times = resolve_scenario_times(query.text)
+        if scenario_times:
+            comparison = _build_scenario(
+                query, scenario_times, region=region, traces=traces or TraceStore()
+            )
+            return replace(comparison.options[0].outcome, scenario=comparison)
 
     runtime = runtime or AgentRuntime(
         registry=tool_registry, traces=traces or TraceStore(), query_id=query_id
@@ -375,6 +425,54 @@ def _dedupe(items: Iterable[str]) -> list[str]:
         if i:
             seen.setdefault(i, None)
     return list(seen)
+
+
+def _build_scenario(
+    query: Query,
+    times: tuple[datetime, datetime],
+    *,
+    region: RegionConfig,
+    traces: TraceStore,
+) -> ScenarioComparison:
+    """Run the same question once per candidate departure time and diff the two real
+    verdicts. Each option is a full, independent :func:`answer` call — same tools, same
+    ceiling, same evidence discipline — never an LLM asked to imagine how the answer
+    might change. Specialist reasoning is switched off for both (``use_model=False``):
+    the comparison is a verdict diff, not two rounds of extra prose, and skipping it
+    keeps a scenario question fast and fully deterministic.
+    """
+    options: list[ScenarioOption] = []
+    for t in times:
+        sub_query = replace(query, when=t, use_model=False, query_id=None)
+        sub_outcome = answer(sub_query, region=region, traces=traces)
+        options.append(ScenarioOption(label=f"Leave at {t.strftime('%H:%M')}", when=t, outcome=sub_outcome))
+
+    a, b = options[0], options[1]
+    va, vb = a.outcome.verdict, b.outcome.verdict
+
+    differences: list[str] = []
+    if va is None or vb is None:
+        differences.append("At least one departure time could not be evaluated at all.")
+        recommended_index = 0
+    elif va.level == vb.level:
+        differences.append(f"Verdict is unchanged: {va.level} at both {a.label} and {b.label}.")
+        recommended_index = 0
+    else:
+        differences.append(f"{a.label}: {va.level}. {b.label}: {vb.level}.")
+        recommended_index = 0 if is_more_permissive(va.level, vb.level) else 1
+        loser = options[1 - recommended_index]
+        loser_verdict = loser.outcome.verdict
+        if loser_verdict and loser_verdict.reasons:
+            differences.append(f"{loser.label} is worse because: {loser_verdict.reasons[-1]}")
+
+    if va and vb and va.ceiling_source and vb.ceiling_source:
+        if va.ceiling_source.valid_to != vb.ceiling_source.valid_to:
+            differences.append(
+                "The governing IMD bulletin's validity window differs between the two "
+                "times — one or both may fall outside it."
+            )
+
+    return ScenarioComparison(options=options, differences=differences, recommended_index=recommended_index)
 
 
 __all__ = ["Query", "QueryOutcome", "answer", "VERDICT_TOOL", "GOVERNING_VARIABLES"]
