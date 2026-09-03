@@ -83,5 +83,8 @@ deterministic tools.
 
 ## Status
 
-Pre-implementation. Data sources verified live 2026-08-30; architecture and contracts locked;
-build phases defined in `PLAN.md`.
+Phases 0-7 implemented: data spine, tool layer, verdict engine, agent core with reasoning
+traces, A* router, five-class geofencing, push/alert loop, both UIs (boat + console), region
+swap, PFZ derivation cross-check, and the productivity diagnostic. `data/fixtures/` carries a
+frozen snapshot for network-off demo mode. Remaining: Phase 8 rehearsal artifacts and the
+Phase 9 slide deck — see `PLAN.md`.
