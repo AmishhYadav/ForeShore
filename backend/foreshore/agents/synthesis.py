@@ -169,6 +169,11 @@ class EvidenceRow:
     acquired_at: str
     is_derived: bool
     governs: bool = False
+    #: Same key as TraceStep.provenance_ids entries (Provenance.provenance_id, i.e.
+    #: "<source_id>@<issued_at or acquired_at isoformat>") — the join key the trace
+    #: inspector needs to expand a step's bare provenance ids into these real rows
+    #: without re-deriving the "source_id@timestamp" format client-side.
+    provenance_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -206,6 +211,7 @@ def evidence_panel(
                 acquired_at=p.acquired_at.isoformat(),
                 is_derived=p.is_derived,
                 governs=p.provenance_id in gov,
+                provenance_id=p.provenance_id,
             )
         )
     return [r.to_dict() for r in rows]

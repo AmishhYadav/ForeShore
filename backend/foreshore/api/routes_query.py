@@ -21,9 +21,24 @@ from pydantic import BaseModel
 
 from ..agents.orchestrator import Query, answer as run_query
 from ..tools.geofence_tools import check_geofences
+from ..tools.hazards import get_hazard_alerts
+from ..tools.pfz import find_nearest_pfz
+from ..tools.pfz_derived import derive_pfz_zones
 from ..tools.routing_tools import plan_route
 from ..tools.verdict_tools import evaluate_verdict
 from .serialize import tool_result_response
+
+
+def _parse_bbox(bbox: str | None) -> list[float] | None:
+    """``"78.0,8.0,80.6,10.9"`` -> ``[78.0, 8.0, 80.6, 10.9]``. Absent/unparsable both mean
+    "use the active region's own bbox" — the tool layer already defaults that way."""
+    if not bbox:
+        return None
+    try:
+        parts = [float(p) for p in bbox.split(",")]
+    except ValueError:
+        return None
+    return parts if len(parts) == 4 else None
 
 router = APIRouter(prefix="/api", tags=["query"])
 
@@ -147,6 +162,47 @@ def post_geofence_check(body: GeofenceCheckRequest) -> dict[str, Any]:
         classes=body.classes,
     )
     return tool_result_response(result)
+
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/pfz/official?lat&lon — thin passthrough to tool 7, find_nearest_pfz
+#
+# Map-layer passthroughs (this + the two below): the boat/console maps need PFZ lines,
+# derived zones and hazard geometry to draw whether or not the user has asked a
+# question, so — like /api/route, /api/verdict and /api/geofence/check above — these
+# call the tool directly rather than paying for a full agent turn.
+# ------------------------------------------------------------------------------------
+
+
+@router.get("/pfz/official")
+def get_pfz_official(lat: float, lon: float) -> dict[str, Any]:
+    return tool_result_response(find_nearest_pfz(lat=lat, lon=lon))
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/pfz/derived?bbox&when — thin passthrough to tool 8, derive_pfz_zones
+# ------------------------------------------------------------------------------------
+
+
+@router.get("/pfz/derived")
+def get_pfz_derived(bbox: str | None = None, when: str | None = None) -> dict[str, Any]:
+    return tool_result_response(derive_pfz_zones(bbox=_parse_bbox(bbox), when=when))
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/hazards?bbox&when — thin passthrough to tool 12, get_hazard_alerts
+#
+# payload carries `polygons` (cone/wind-radii exclusion areas) and `cyclone_track`
+# (the storm's own observed+forecast LineString) as two distinct GeoJSON collections —
+# see tools/hazards.py's module docstring. Zero active hazards is `ok=True` with
+# `payload["no_active_hazard"] = True`, never an error.
+# ------------------------------------------------------------------------------------
+
+
+@router.get("/hazards")
+def get_hazards(bbox: str | None = None, when: str | None = None) -> dict[str, Any]:
+    return tool_result_response(get_hazard_alerts(bbox=_parse_bbox(bbox), when=when))
 
 
 __all__ = ["router"]

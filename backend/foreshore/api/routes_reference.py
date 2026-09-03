@@ -14,8 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
-from ..config import load_region, load_vessels
+from ..config import load_region, load_vessels, set_active_region
 from ..geofence.engine import GeofenceEngine
 from ..models import GeofenceClass
 from ..store.vectors import VectorStore
@@ -30,15 +31,8 @@ router = APIRouter(prefix="/api", tags=["reference"])
 # ------------------------------------------------------------------------------------
 
 
-@router.get("/region")
-def get_region(region_id: str | None = None) -> dict[str, Any]:
-    try:
-        region = load_region(region_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
+def _region_dict(region) -> dict[str, Any]:
     vessels = load_vessels()
-
     return {
         "region_id": region.region_id,
         "display_name_en": region.display_name_en,
@@ -68,6 +62,42 @@ def get_region(region_id: str | None = None) -> dict[str, Any]:
             for v in vessels.classes.values()
         ],
     }
+
+
+@router.get("/region")
+def get_region(region_id: str | None = None) -> dict[str, Any]:
+    try:
+        region = load_region(region_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _region_dict(region)
+
+
+# ------------------------------------------------------------------------------------
+# POST /api/region/active — live region swap (CLAUDE.md: "does this only work for
+# Tamil Nadu?" answered by a live config file swap, not a redeploy)
+#
+# This mutates process-wide state (FORESHORE_REGION) via config.set_active_region,
+# which is deliberately simple and matches this app's actual deployment shape: one
+# backend process per demo, not a multi-tenant server serving several regions to
+# different users at once. Every *query* can already be pointed at a specific region
+# without any global mutation (POST /api/query's region_id field, unaffected by this
+# endpoint) — this endpoint exists only so the map/fleet/geofence surfaces that don't
+# take a region_id on every call can be told, once, which region they are now showing.
+# ------------------------------------------------------------------------------------
+
+
+class SetActiveRegionRequest(BaseModel):
+    region_id: str
+
+
+@router.post("/region/active")
+def post_region_active(body: SetActiveRegionRequest) -> dict[str, Any]:
+    try:
+        region = set_active_region(body.region_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _region_dict(region)
 
 
 # ------------------------------------------------------------------------------------
