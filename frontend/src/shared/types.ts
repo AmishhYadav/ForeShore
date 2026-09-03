@@ -101,6 +101,8 @@ export interface EvidencePanelRow {
   acquired_at: string;
   is_derived: boolean;
   governs: boolean;
+  /** Join key against TraceStep.provenance_ids — same "<source_id>@<timestamp>" format. */
+  provenance_id: string;
 }
 
 export interface PlanStep {
@@ -251,12 +253,13 @@ export interface VesselState {
   last_verdict: VerdictLevel | null;
 }
 
-/** WS /ws/alerts server -> client messages. */
+/** WS /ws/alerts server -> client messages. Per-vessel verdict rides in
+ * `vessels[i].last_verdict` — nothing on the wire ever sends a standalone
+ * `{type: "verdict", ...}` message (see docs/API.md). */
 export type WsServerMessage =
   | { type: "hello"; interval_s: number; mode: "live" | "fixture"; region_id: string | null }
   | { type: "alert"; alert: Alert }
-  | { type: "vessels"; vessels: VesselState[]; ts: string }
-  | { type: "verdict"; vessel_id: string; level: VerdictLevel };
+  | { type: "vessels"; vessels: VesselState[]; ts: string };
 
 /** WS /ws/alerts client -> server messages. */
 export type WsClientMessage =
@@ -285,6 +288,43 @@ export interface RegionInfo {
     min_depth_m: number;
     crew_typical: number;
   }[];
+}
+
+/** GET /api/pfz/official — tool 7's payload. `geometry`/`closest_point` are null (and
+ * `missing` carries "incois_pfzlines") on days INCOIS has not published a line for this
+ * sector — a valid, non-error outcome per CLAUDE.md, render as "no official line today"
+ * rather than treating a null geometry as a failure. */
+export interface PfzOfficialPayload {
+  distance_nm: number | null;
+  bearing_deg: number | null;
+  advisory_date: string | null;
+  closest_point: [number, number] | null;
+  geometry: GeoJSON.Geometry | null;
+  is_official: true;
+}
+
+/** GET /api/pfz/derived — tool 8's payload. Always label this as FORESHORE's own
+ * indicative derivation, never as an official INCOIS product — see `disclaimer` and
+ * CLAUDE.md's "Do not present derived PFZ zones as the official INCOIS advisory." */
+export interface PfzDerivedPayload {
+  zones: GeoJSON.FeatureCollection;
+  method: Record<string, unknown>;
+  granule: Record<string, unknown>;
+  chlorophyll_available: boolean;
+  chlorophyll_reason: string | null;
+  disclaimer: string;
+}
+
+/** GET /api/hazards — tool 12's payload. `polygons` (cone/wind-radii exclusion areas)
+ * and `cyclone_track` (the storm's own observed+forecast line) are deliberately two
+ * separate GeoJSON collections — render as different map layers, not one. Each feature
+ * carries `hazard_class`/`event_name`/`alert_level` in its `properties`.
+ * `no_active_hazard: true` with empty collections is a valid, positive result. */
+export interface HazardsPayload {
+  events: Record<string, unknown>[];
+  polygons: GeoJSON.Feature[];
+  cyclone_track: GeoJSON.FeatureCollection;
+  no_active_hazard: boolean;
 }
 
 export interface HealthSourceRow {

@@ -5,7 +5,10 @@
  */
 import type {
   Alert,
+  HazardsPayload,
   HealthReport,
+  PfzDerivedPayload,
+  PfzOfficialPayload,
   QueryOutcome,
   QueryRequest,
   RegionInfo,
@@ -145,9 +148,51 @@ export function getLayerGeoJson(layerId: string): Promise<GeoJSON.FeatureCollect
   return request(`/api/layers/${layerId}`);
 }
 
-export function getGeofencesGeoJson(classes?: string[]): Promise<GeoJSON.FeatureCollection> {
-  const q = classes && classes.length ? `?classes=${classes.join(",")}` : "";
-  return request(`/api/geofences.geojson${q}`);
+export function getGeofencesGeoJson(classes?: string[], regionId?: string): Promise<GeoJSON.FeatureCollection> {
+  const q = new URLSearchParams();
+  if (classes && classes.length) q.set("classes", classes.join(","));
+  if (regionId) q.set("region_id", regionId);
+  const qs = q.toString();
+  return request(`/api/geofences.geojson${qs ? `?${qs}` : ""}`);
+}
+
+// -- Map-layer passthroughs (tools 7, 8, 12) -------------------------------------------
+
+export function getPfzOfficial(lat: number, lon: number): Promise<ToolResultEnvelope<PfzOfficialPayload>> {
+  const q = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+  return request(`/api/pfz/official?${q.toString()}`);
+}
+
+export function getPfzDerived(params?: {
+  bbox?: [number, number, number, number];
+  when?: string;
+}): Promise<ToolResultEnvelope<PfzDerivedPayload>> {
+  const q = new URLSearchParams();
+  if (params?.bbox) q.set("bbox", params.bbox.join(","));
+  if (params?.when) q.set("when", params.when);
+  const qs = q.toString();
+  return request(`/api/pfz/derived${qs ? `?${qs}` : ""}`);
+}
+
+export function getHazards(params?: {
+  bbox?: [number, number, number, number];
+  when?: string;
+}): Promise<ToolResultEnvelope<HazardsPayload>> {
+  const q = new URLSearchParams();
+  if (params?.bbox) q.set("bbox", params.bbox.join(","));
+  if (params?.when) q.set("when", params.when);
+  const qs = q.toString();
+  return request(`/api/hazards${qs ? `?${qs}` : ""}`);
+}
+
+// -- Region swap ------------------------------------------------------------------------
+
+/** POST /api/region/active — swaps the process-wide active region (config.set_active_region),
+ * so every subsequent call that doesn't pass its own region_id (fleet, geofences, push loop)
+ * re-homes too. A single POST /api/query can already target a region without this, via its
+ * own region_id field — this exists only for the surfaces that don't take one per call. */
+export function setActiveRegion(regionId: string): Promise<RegionInfo> {
+  return request("/api/region/active", { method: "POST", body: JSON.stringify({ region_id: regionId }) });
 }
 
 export { ApiError };

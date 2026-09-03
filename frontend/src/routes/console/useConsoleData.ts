@@ -160,13 +160,6 @@ export function useConsoleData() {
         case "alert":
           setAlerts((prev) => upsertAlert(prev, msg.alert));
           break;
-        case "verdict":
-          setVessels((prev) =>
-            prev.map((v) =>
-              v.vessel_id === msg.vessel_id ? { ...v, last_verdict: msg.level } : v,
-            ),
-          );
-          break;
       }
     });
     socket.connect();

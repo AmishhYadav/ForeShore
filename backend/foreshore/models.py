@@ -115,6 +115,7 @@ class Provenance:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "provenance_id": self.provenance_id,
             "source_id": self.source_id,
             "source_name": self.source_name,
             "authority": self.authority,
