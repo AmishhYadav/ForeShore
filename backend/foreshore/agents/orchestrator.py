@@ -364,7 +364,8 @@ def _extras(results: Sequence[ToolResult]) -> list[str]:
     Only tool summaries — every number in them already came from an Observation.
     """
     keep = ("find_nearest_pfz", "check_geofences", "nearest_harbour", "plan_route",
-            "get_lightning_nowcast", "get_hazard_alerts")
+            "get_lightning_nowcast", "get_hazard_alerts", "get_productivity_history",
+            "derive_pfz_zones")
     return [r.summary for r in results if r.tool in keep and r.summary]
 
 

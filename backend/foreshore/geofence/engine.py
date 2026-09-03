@@ -359,8 +359,23 @@ class GeofenceEngine:
         )
 
     def as_geojson(self, classes: Sequence[GeofenceClass] | None = None) -> dict:
-        """Everything the map needs to draw, class-tagged and colour-tagged."""
+        """Everything the map needs to draw, class-tagged and colour-tagged.
+
+        Static layers (``imbl_historic_waters``, ``eco_coral``, ...) are stored under a
+        fixed layer id shared by every region — nothing today writes a Palk-Bay-only
+        layer under a Gujarat-only name. So a region swap alone does not guarantee the
+        geometry actually changed with it: without this filter, switching to
+        ``gujarat_sir_creek`` would silently keep drawing the 1974 Palk Bay historic-
+        waters line off a coast it has nothing to do with, which is worse than drawing
+        nothing. Every feature is therefore required to intersect the *active* region's
+        bbox (padded, so a boundary running exactly along the edge still shows) before
+        it reaches the map — region config stays the single source of truth for what a
+        region's map is allowed to contain, per CLAUDE.md invariant 6.
+        """
+        from shapely.geometry import box as _bbox_box, shape as shapely_shape
+
         wanted = set(classes) if classes else None
+        region_box = _bbox_box(*self.region.bbox).buffer(1.0)  # ~1 deg pad
         features: list[dict] = []
         for layer_id, gclass in region_layers(self.region).items():
             if wanted and gclass not in wanted:
@@ -371,6 +386,13 @@ class GeofenceEngine:
                 continue
             spec = spec_for(gclass, self.cfg)
             for f in fc.get("features", []):
+                geom = f.get("geometry")
+                if geom:
+                    try:
+                        if not region_box.intersects(shapely_shape(geom)):
+                            continue
+                    except Exception:
+                        pass
                 props = dict(f.get("properties") or {})
                 props.update(
                     {

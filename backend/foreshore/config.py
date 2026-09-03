@@ -300,6 +300,12 @@ ACTIVE_REGION_ENV = "FORESHORE_REGION"
 def set_active_region(region_id: str) -> RegionConfig:
     load_region(region_id)          # raises before mutating if unknown
     os.environ[ACTIVE_REGION_ENV] = region_id
+    # Every unparameterised `load_region()` call across the app (push loop, ceiling,
+    # synthesis, sources/base.py's default Source region, ...) is `@lru_cache`d under
+    # the `None` key it resolved on first use. Without clearing that entry here it goes
+    # on returning whichever region was active at process start, forever — the swap
+    # would only ever be visible to callers that pass region_id explicitly.
+    reset_caches()
     return load_region(region_id)
 
 
