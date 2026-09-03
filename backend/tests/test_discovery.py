@@ -12,12 +12,17 @@ is one row per real, distinct ``source_id`` — so this tool probes all nine:
 ``incois_argo``, ``openmeteo_marine``, ``openmeteo_forecast``, ``gdacs_tc``,
 ``marine_regions_imbl``.
 
-``data/fixtures/`` ships empty in this repo (see ``test_provenance.py``'s module
-docstring for the same observation), so every adapter's own live-network probe fails
-with ``FixtureMissing`` under ``FORESHORE_MODE=fixture`` — that is expected, and is
-exactly the "gap is a finding, not a failure" behaviour this tool exists to report
-honestly rather than hide. These tests assert the tool's own contract (shape, isolation,
-provenance, mode discipline), not that any particular source is reachable.
+``data/fixtures/`` is frozen from real live traffic by ``scripts/freeze_fixtures.py``
+(see that script's own docstring), so under ``FORESHORE_MODE=fixture`` every adapter's
+``.health()`` now replays a real snapshot rather than raising ``FixtureMissing`` — this
+is what makes the venue-wifi-off demo path actually work, not just theoretically exist.
+``test_returns_ok_true_with_nine_rows_each_carrying_a_real_source_id`` asserts that
+success directly. The "gap is a finding, not a failure" framing this tool is built
+around is still exercised structurally by
+``test_one_adapter_health_raising_does_not_sink_the_other_rows`` below (a monkeypatched
+failure), not by depending on the fixture store being empty — these tests assert the
+tool's own contract (shape, isolation, provenance, mode discipline), never a live
+source's current reachability.
 """
 
 from __future__ import annotations
@@ -71,14 +76,19 @@ def test_returns_ok_true_with_nine_rows_each_carrying_a_real_source_id():
     for row in rows:
         assert isinstance(row["source_id"], str) and row["source_id"], f"blank source_id: {row}"
 
-    # data/fixtures/ ships empty, so every row is honestly reported as a gap right now —
-    # asserting that (rather than ok=True per row) keeps this test truthful about what
-    # the repo actually contains, per the specialist's own "a gap is a finding, not a
-    # failure" framing.
-    assert all(row["ok"] is False for row in rows)
-    assert "0 of 9" in result.summary
-    for row in rows:
-        assert row["source_id"] in result.summary
+    # data/fixtures/ is frozen from real live traffic (scripts/freeze_fixtures.py), so
+    # every adapter's .health() replays real data here and reports ok=True — this is
+    # the whole point of freezing fixtures: the network-off path is not just reachable,
+    # it is honestly healthy. A source that were genuinely unreachable even live (or
+    # whose fixture went stale) would still show up here as ok=False, per the
+    # "gap is a finding, not a failure" framing — see the isolation test below for that
+    # path exercised directly, rather than depending on an empty fixture store.
+    assert all(row["ok"] is True for row in rows), [r for r in rows if not r["ok"]]
+    # list_available_data's summary only enumerates source_ids by name on the
+    # unreachable/gap branch (see tools/discovery.py) — with every row healthy it is
+    # the short "N of N data sources reachable." form, so assert that instead of a
+    # per-row name-in-summary check that only applies to the failure branch.
+    assert result.summary == "9 of 9 data sources reachable."
 
 
 def test_every_observation_carries_a_real_provenance():

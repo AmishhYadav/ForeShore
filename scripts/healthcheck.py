@@ -9,11 +9,19 @@ thing in the repo that actually dials every one of the eight live source adapter
 reports, this morning, whether each one is still reachable and shaped the way the
 adapter code expects.
 
-Forces ``FORESHORE_MODE=live`` at the very top of the module, before any ``foreshore``
-import — this script's whole purpose is to hit real endpoints regardless of the calling
-shell's env, mirroring (in reverse) how ``backend/tests/conftest.py`` forces
-``FORESHORE_MODE=fixture`` at import time for the whole test session so no test ever
-opens a socket.
+Defaults to ``FORESHORE_MODE=live`` at the very top of the module, before any
+``foreshore`` import — this script's default purpose is to hit real endpoints, mirroring
+(in reverse) how ``backend/tests/conftest.py`` forces ``FORESHORE_MODE=fixture`` at
+import time for the whole test session so no test ever opens a socket. Unlike that
+conftest, this default is not absolute: an explicit ``FORESHORE_MODE=fixture`` in the
+calling shell is honoured rather than overridden, so ``FORESHORE_MODE=fixture python
+scripts/healthcheck.py`` runs the exact same eight probes entirely against
+``data/fixtures/`` with no socket opened (``sources/base.py`` already guarantees that in
+fixture mode) — this is PLAN.md's own stated Phase 1 acceptance criterion ("healthcheck.py
+shows all-green live; FORESHORE_MODE=fixture healthcheck.py all-green with the network
+off") and CLAUDE.md's Phase 8 network-off rehearsal, not a separate code path invented
+here. Bare ``python scripts/healthcheck.py`` with no env var set still defaults to live,
+unchanged, because that is this script's daily-morning purpose per CLAUDE.md.
 
 For each of the eight adapters under ``backend/foreshore/sources/``, this calls the
 adapter's own :meth:`~foreshore.sources.base.Source.health` — the hook
@@ -42,7 +50,8 @@ script adds no new writes of its own).
 
 CLI
 ---
-    python scripts/healthcheck.py
+    python scripts/healthcheck.py                       # live (default)
+    FORESHORE_MODE=fixture python scripts/healthcheck.py  # network-off, against data/fixtures/
 
 Exit code 0 if every source is OK, 1 if any FAILED.
 """
@@ -51,10 +60,14 @@ from __future__ import annotations
 
 import os
 
-# Force live mode before any `foreshore` import — this script's whole purpose is to hit
-# real endpoints, regardless of the calling shell's env. Mirrors, in reverse, how
-# backend/tests/conftest.py forces FORESHORE_MODE=fixture at import time for every test.
-os.environ["FORESHORE_MODE"] = "live"
+# Default to live mode before any `foreshore` import, but honour an explicit
+# FORESHORE_MODE=fixture from the calling shell rather than clobbering it — see the
+# module docstring. This is the one deliberate difference from backend/tests/conftest.py,
+# which forces fixture mode unconditionally: that file's job is "never let a test open a
+# socket, ever"; this script's job is "hit real endpoints every morning by default, but
+# still work as the FORESHORE_MODE=fixture network-off healthcheck PLAN.md promises."
+if os.environ.get("FORESHORE_MODE", "").strip().lower() != "fixture":
+    os.environ["FORESHORE_MODE"] = "live"
 
 import sys
 import time
@@ -70,7 +83,7 @@ _BACKEND = Path(__file__).resolve().parents[1] / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from foreshore.config import RegionConfig, load_region  # noqa: E402
+from foreshore.config import RegionConfig, load_region, mode  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -244,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     region = load_region()
     print(
         f"FORESHORE source healthcheck — region={region.region_id} "
-        f"({region.display_name_en}); FORESHORE_MODE=live (forced)"
+        f"({region.display_name_en}); FORESHORE_MODE={mode()}"
     )
     print()
 
