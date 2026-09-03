@@ -441,13 +441,25 @@ class IncoisThredds(Source):
 
     def _binary_key(
         self, urlPath: str, raw_vars: Sequence[str], bbox: tuple[float, float, float, float],
-        time_start: datetime | None, time_end: datetime | None,
     ) -> str:
+        """Cache/fixture identity for a grid fetch — deliberately **not** a function of
+        any request-time time-window. ``urlPath`` already names the specific day's file
+        (the thing that actually determines what data exists); a ``time_start``/
+        ``time_end`` NCSS subset window is a live-request bandwidth optimisation only
+        (see ``_fetch_grid_bytes``), not a second axis of identity. It used to be part of
+        this hash, computed from ``at ± 6h`` where ``at`` is frequently "now" resolved
+        fresh per request — so two logically identical "what's the sea state right now"
+        calls, microseconds apart, hashed to two different keys, and in
+        ``FORESHORE_MODE=fixture`` only one of them could ever have been frozen. A demo
+        asking about "now" would then non-deterministically, and after enough real time
+        passed essentially *permanently*, report the INCOIS OSF wave/mwh/currents/winds
+        nest as missing — silently losing the authoritative source in exactly the
+        evidence-panel disagreement beat CLAUDE.md calls the demo's centrepiece. See
+        ``docs/DECISIONS.md`` D11.
+        """
         blob = "|".join([
             urlPath, ",".join(sorted(raw_vars)),
             ",".join(f"{x:.4f}" for x in bbox),
-            time_start.isoformat() if time_start else "-",
-            time_end.isoformat() if time_end else "-",
         ])
         return hashlib.sha1(blob.encode()).hexdigest()[:20]
 
@@ -457,7 +469,7 @@ class IncoisThredds(Source):
         time_start: datetime | None, time_end: datetime | None,
     ) -> _BlobFetch:
         sub_source = f"{self.source_id}_{product}"
-        key = self._binary_key(urlPath, raw_vars, bbox, time_start, time_end)
+        key = self._binary_key(urlPath, raw_vars, bbox)
 
         if is_fixture():
             path = binary_path(sub_source, key, ".nc")

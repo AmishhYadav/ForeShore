@@ -85,21 +85,30 @@ _KMH_TO_MS = 1.0 / 3.6
 _KMH_TO_KN = 1.0 / 1.852
 
 
-def _ensure_aware(dt: datetime | None) -> datetime:
-    if dt is None:
-        return utcnow()
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
-
-
 def _parse_hour(raw_time: str) -> datetime:
     """Open-Meteo hourly timestamps are naive local-looking strings; ``timezone=UTC`` is
     always requested, so they are interpreted as UTC, never as the server's local zone."""
     return datetime.fromisoformat(raw_time).replace(tzinfo=UTC)
 
 
-def _window_for(when: datetime) -> tuple[int, int]:
-    """(past_hours, forecast_hours) needed for a single Open-Meteo call to bracket ``when``."""
-    delta_h = (when - utcnow()).total_seconds() / 3600.0
+def _window_for(when: datetime, now: datetime) -> tuple[int, int]:
+    """(past_hours, forecast_hours) needed for a single Open-Meteo call to bracket ``when``.
+
+    ``now`` must be a value the caller already captured, never a fresh internal
+    ``utcnow()`` call here. ``.at()``'s "now" case (``when=None``) sets ``when = now``
+    from the very same capture, so a request for "right now" always computes exactly
+    ``delta_h = 0.0`` and always resolves to the same ``(past_hours, forecast_hours)``.
+    A second, independent ``utcnow()`` call here would instead race the first: two calls
+    microseconds apart straddle the real clock roughly 50/50, so the two nearly-identical
+    "now" values sometimes disagree by a hair, ``delta_h`` flips sign, and this function
+    returns a *different* window for what is logically the same request. In
+    ``FORESHORE_MODE=fixture`` that difference changes the request params and therefore
+    the fixture cache key (``store/cache.py::key_for``) — the exact bug this docstring
+    exists to prevent from coming back: a demo asking "is it safe right now" would
+    non-deterministically show Open-Meteo as present or missing from run to run, on a
+    path whose whole point is to be immune to exactly this kind of flakiness.
+    """
+    delta_h = (when - now).total_seconds() / 3600.0
     if delta_h >= 0:
         return 0, max(1, math.ceil(delta_h) + 1)
     return max(1, math.ceil(-delta_h) + 1), 1
@@ -286,8 +295,13 @@ class _OpenMeteoAdapter(Source):
     ) -> list[Observation]:
         """Observations at the single hour nearest ``when`` (default: now)."""
         lat, lon = self._resolve(lat, lon)
-        when = _ensure_aware(when)
-        past_h, fwd_h = _window_for(when)
+        # One `now` capture, reused as both the "now" reference below and, when the
+        # caller passed no `when`, as `when` itself — see _window_for's docstring for
+        # why a second independent utcnow() call here would reintroduce the exact
+        # fixture-mode nondeterminism this split-capture avoids.
+        now = utcnow()
+        when = when.replace(tzinfo=UTC) if (when and not when.tzinfo) else (when or now)
+        past_h, fwd_h = _window_for(when, now=now)
         raw = self._call(lat, lon, variables, forecast_hours=fwd_h, past_hours=past_h)
         obs = self.parse(raw, lat=lat, lon=lon, variables=variables)
         if not obs:

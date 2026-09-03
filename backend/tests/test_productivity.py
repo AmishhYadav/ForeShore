@@ -236,11 +236,22 @@ def test_chl_single_point_is_reported_as_a_level_not_a_fabricated_trend(monkeypa
 
 
 def test_real_registry_call_abstains_honestly_with_no_fixtures(tmp_path, monkeypatch):
-    """No frozen fixtures exist anywhere in this repository yet (data/fixtures/ is
-    empty). Called through the real, unmocked registry in FORESHORE_MODE=fixture (set
-    session-wide by conftest.py), both adapters must fail cleanly and the tool must
-    degrade to an honest abstention — never a crash, never an invented narrative."""
-    monkeypatch.setattr(cache_store, "CACHE_DIR", tmp_path)  # isolate from other tests' cache
+    """Called through the real, unmocked registry in FORESHORE_MODE=fixture (set
+    session-wide by conftest.py) against an empty fixture directory, both adapters must
+    fail cleanly and the tool must degrade to an honest abstention — never a crash,
+    never an invented narrative.
+
+    Isolates *both* CACHE_DIR and FIXTURE_DIR to this test's own empty tmp_path.
+    `scripts/freeze_fixtures.py` now legitimately populates the repo's real
+    `data/fixtures/` (Phase 8) — including a real `productivity_trends` entry this tool
+    itself reads — so patching only CACHE_DIR (as this test originally did, when the
+    repo's fixtures directory really was still empty) would let a real frozen
+    observation leak in and falsify this test's actual premise, "nothing is available
+    anywhere." That the *repo* now has real fixtures is progress, not a reason to weaken
+    this test — it still needs a genuinely empty fixture directory to exercise the
+    abstention path at all."""
+    monkeypatch.setattr(cache_store, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(cache_store, "FIXTURE_DIR", tmp_path / "fixtures")
 
     result = registry.call("get_productivity_history", {})
 

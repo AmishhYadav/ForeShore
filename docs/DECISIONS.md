@@ -155,3 +155,82 @@ is correct behaviour and a weak opening. The frozen fixture must therefore be a 
 whose validity window covers the time the demo query asks about — or the query asks about
 the window the governing bulletin actually covers. Do not "fix" this by relaxing the
 staleness rule.
+
+---
+
+## D10 — Scenario exploration re-uses `answer()` twice rather than adding a second pipeline
+
+**Finding.** PLAN.md Phase 7 item 4 asks for "what if I leave at 04:00 instead of
+06:00" as "a re-plan over the same evidence with a diffed verdict." The planner already
+classified a `scenario` intent (`INTENT_CUES["scenario"]`) but nothing downstream ever
+acted on it — no time-comparison logic existed anywhere in `agents/` before this.
+
+**Decision.** `agents/planner.py::resolve_scenario_times` triggers only when the
+utterance names **two** explicit `HH:MM` times — the exact shape of the PS's own
+example — never on "earlier"/"later" cues alone, since those name no second instant to
+compare against. When it fires, `agents/orchestrator.py::answer()` runs itself
+recursively once per candidate time (`_build_scenario`), each a complete, independent,
+`use_model=False` answer — same tools, same ceiling, same evidence discipline as an
+ordinary query, never an LLM asked to imagine how the two might differ. The outer
+response *is* the earlier option's own `QueryOutcome` with a `scenario` field attached,
+so a client that ignores `scenario` entirely still renders a correct, complete answer.
+An explicit `when` on the request always suppresses scenario detection — a caller who
+names an exact instant gets an answer for exactly that instant, never an unrequested
+comparison. See `docs/API.md`'s "Scenario exploration" section for the wire shape.
+
+**What we do not do.** We do not have the LLM compare the two times qualitatively —
+every difference reported is read off two real, independently-computed `Verdict`
+objects. We do not run specialist reasoning for either option, since the comparison
+itself is the deliverable, not extra prose, and skipping it keeps a scenario question
+fast and fully deterministic even with a model configured.
+
+---
+
+## D11 — Two fixture-mode determinism bugs, both from keying a cache on "now"
+
+**Finding.** Calling `get_sea_state` repeatedly for "right now", in
+`FORESHORE_MODE=fixture`, non-deterministically reported `openmeteo_marine` as missing
+on roughly half of otherwise-identical calls, and — through the real request path (an
+orchestrator-resolved, explicit `when`, which is what every actual query sends, never
+`None`) — reported `incois_osf_wave`/`incois_osf_mwh` as missing **every time**, not
+flakily. Both broke CLAUDE.md's invariant 7 in the same way: a value derived from
+calling the clock twice, independently, became part of a cache/fixture key.
+
+1. `sources/openmeteo.py::_window_for` computed `delta_h` against its own fresh
+   `utcnow()` call, a few microseconds after `.at()` had already resolved its own "now"
+   for `when`. The two nearly-simultaneous clock reads occasionally disagreed by a hair,
+   flipping `_window_for`'s sign branch and changing the `forecast_hours`/`past_hours`
+   request params — which are part of the fixture key. Only one of the two possible
+   values was ever actually frozen.
+2. `sources/incois_thredds.py::_binary_key` hashed a `time_start`/`time_end` window
+   (`at ± 6h`) into the grid-fetch cache/fixture key. Every real query supplies an
+   explicit, freshly-resolved `when` (`agents/planner.py` always sets one), so this
+   window is unique to the microsecond on almost every call — the key essentially never
+   repeats, so a frozen fixture for it essentially never exists. This is the more
+   serious of the two: it silently dropped INCOIS's own 11 km assimilated model — the
+   source CLAUDE.md calls authoritative and the evidence panel's centrepiece — from
+   *every* real query in fixture mode, deterministically, not just flakily.
+
+**Decision.** Both fixed the same way: stop deriving a cache/fixture key from anything
+that depends on when "now" happened to be read. `_window_for` now takes `now` as an
+explicit argument from its caller instead of reading the clock itself; `.at()` captures
+exactly one `now` and reuses it as both the reference instant and (when the caller asked
+for "now") as `when` itself. `_binary_key` no longer hashes `time_start`/`time_end` at
+all — cache/fixture identity is `(urlPath, raw_vars, bbox)`, since `urlPath` already
+names the specific day's file (the actual determinant of what data exists); the ±6h
+window remains on the *live* NCSS request only, as the bandwidth-optimisation it always
+was, never as a second axis of cache identity. `cache_ttl_s` (1 h) stays comfortably
+inside the ±6h live-request window, so this does not introduce a live-mode staleness
+risk it didn't already have.
+
+**What we do not do.** We do not round either value to a coarse time bucket as a
+compromise — a bucket boundary is still a boundary, and a demo run straddling it hours
+after the morning `freeze_fixtures.py` would fail the exact same way for the exact same
+reason. The fix removes the clock from the key entirely rather than making the flakiness
+rarer.
+
+**Consequence for `data/fixtures/`.** Every previously-frozen `incois_osf_*` and
+`openmeteo_marine` blob was keyed the old (broken) way and is now orphaned; not one of
+them still matches. `scripts/freeze_fixtures.py` was re-run in live mode after this fix
+landed and the whole snapshot was refrozen — do this again after touching either
+adapter's request-building logic, not just after touching the ceiling or verdict paths.
