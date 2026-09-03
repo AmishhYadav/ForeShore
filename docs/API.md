@@ -47,6 +47,7 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
     "reasons": ["…"],
     "ceiling_applied": true,
     "downgraded_from": "GO_WITH_CAUTION",
+    "ceiling_notes": ["…"],            // human-readable audit of every ceiling rule that fired
     "ceiling_source": { /* Provenance */ },
     "handoff": { "authority_name": "…", "authority_type": "landing_centre",
                  "contact": "…", "distance_nm": 0.5 },   // required when DO_NOT_ADVISE
@@ -56,9 +57,14 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
   "trace": [ { /* TraceStep */ } ],
   "route": { /* Route.to_dict(), or null */ },
   "payloads": {
-    "evidence_panel": [ { "variable", "value", "unit", "source_name", "authority",
-                          "acquired_at", "issued_at", "resolution_m", "freshness",
+    "evidence_panel": [ { "variable", "display", "source_name", "authority",
+                          "resolution", "freshness", "acquired_at",
                           "is_derived", "governs" } ],
+    // one row per Observation (agents/synthesis.py's EvidenceRow.to_dict()); `display`
+    // is the value already formatted with its unit ("0.59 m", "MODERATE") — there is no
+    // separate `value`/`unit` pair on the wire. `resolution` is a formatted string
+    // ("11 km" or "point/text"), not raw metres, and there is no `issued_at` here —
+    // freshness is precomputed server-side into the `freshness` field instead.
     "labels": { /* UI strings in the answer's language */ },
     "verdict_copy": { /* headline + one-line reason in that language */ },
     "<tool_name>": { /* that tool's payload, e.g. disagreements, proximities, zones */ }
@@ -80,8 +86,12 @@ render it as a failure.
 ### `POST /api/route`
 
 Thin passthrough to tool 11. `{origin_lat, origin_lon, dest_lat, dest_lon, departure?,
-vessel_class?}` → the tool's `ToolResult.to_dict()`, whose payload carries `route`, the
-per-leg `cost_breakdown` and `why_it_bends`.
+vessel_class?}` → the tool's `ToolResult.to_dict()`, whose `payload.route` is
+`Route.to_dict()`: `waypoints`, `legs` (each with its own `cost_breakdown`), a top-level
+aggregate `cost_breakdown`, `total_distance_nm`/`direct_distance_nm`/`detour_pct`,
+`total_eta_seconds`, `feasible`, `failure_reason`, `evidence`, and `avoided` — the names
+of hazards/boundaries routed around, which is the "why it bends" explanation (there is
+no separate `why_it_bends` field).
 
 ### `GET /api/verdict?lat&lon&vessel_class&when`
 
@@ -115,11 +125,14 @@ AIS for Indian small boats.
 Server pushes, client never has to poll:
 
 ```jsonc
+{ "type": "hello",    "interval_s": 5, "mode": "fixture", "region_id": "palk_bay_gom" }  // sent once, on connect
 { "type": "alert",    "alert": { /* Alert */ } }
 { "type": "vessels",  "vessels": [ /* VesselState */ ], "ts": "…" }
-{ "type": "verdict",  "vessel_id": "…", "level": "…" }
-{ "type": "hello",    "interval_s": 5, "mode": "fixture", "region_id": "palk_bay_gom" }
 ```
+
+Per-vessel verdict rides along in `vessels[i].last_verdict` (a `VesselState` field) rather
+than its own message type — nothing pushes a standalone `{"type": "verdict", ...}`
+message.
 
 Client → server: `{"type": "ack", "alert_id": "…", "by": "…"}`,
 `{"type": "subscribe", "vessel_ids": [...]}` (omit for all).
@@ -130,15 +143,15 @@ Client → server: `{"type": "ack", "alert_id": "…", "by": "…"}`,
 
 | Endpoint | Returns |
 |---|---|
-| `GET /health` | `{mode, region_id, sources: [{source_id, ok, latency_ms, issued_at, freshness}], tools_unavailable}` — the healthcheck table, as JSON |
-| `GET /api/region` | region config the UI needs: `bbox`, `anchor_ports`, `languages`, `basemap`, `districts`, `vessel_classes` |
-| `GET /api/architecture` | specialists + the tool catalogue, for the console's architecture panel |
+| `GET /health` | `{mode, region_id, sources: [{source_id, ok, latency_ms, issued_at, freshness}], tools_unavailable, checked_at}` — the healthcheck table, as JSON. `note` is present only when the region or source probe itself failed |
+| `GET /api/region?region_id=` | region config the UI needs: `region_id`, `display_name_en/local`, `bbox`, `anchor_ports`, `primary_language`, `fallback_language`, `languages`, `basemap`, `districts`, `vessel_classes` |
+| `GET /api/architecture` | `{specialists: [{name, role, ps_capability, tools}]}` — each specialist's own restricted tool subset, for the console's architecture panel. The full tool catalogue (schemas, descriptions) is `/api/catalogue`, not this |
 | `GET /api/catalogue` | tool 16's payload: every source, its variables, resolution, cadence, availability |
-| `GET /api/traces?limit=20` | recent queries: `{query_id, text, language, verdict, ts, steps}` |
-| `GET /api/trace/{query_id}` | the full trace tree, tool by tool, with every provenance record |
+| `GET /api/traces?limit=20` | recent queries: `{query_id, started_at, agents, step_count, tools}` — one row per query, newest first. Not the steps themselves; fetch those from `/api/trace/{query_id}` |
+| `GET /api/trace/{query_id}` | `{query_id, steps}` — the full trace tree, tool by tool, nested `{step, children}` by `parent_id`; each step carries its own `provenance_ids` (not the full provenance records — cross-reference against the query's `evidence`/`evidence_panel`) |
 | `GET /api/layers` | available static layer ids + metadata |
 | `GET /api/layers/{layer_id}` | that layer as GeoJSON |
-| `GET /api/geofences.geojson?classes=` | geofence layers as GeoJSON, tagged by class, with each class's copy and lead distances |
+| `GET /api/geofences.geojson?classes=&region_id=` | geofence layers as GeoJSON, tagged by class, with each class's copy and lead distances |
 
 `GET /health` must answer while sources are down — it reports the failure, it does not
 become one.

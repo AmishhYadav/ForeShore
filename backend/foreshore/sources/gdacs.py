@@ -294,6 +294,62 @@ class GDACSCyclones(Source):
 
         return polygons, observations
 
+    def track_lines(self) -> tuple[list[dict[str, Any]], list[Observation]]:
+        """Track LineStrings (``Line_Line_N`` in :meth:`geometry`'s ``track`` bucket) for
+        every nearby current event, as tagged GeoJSON features, plus one categorical
+        Observation per event.
+
+        Distinct from :meth:`exclusion_polygons`: the cone/wind-radii polygons are what
+        the router must treat as impassable; the track is where the storm has already
+        been and is forecast to go, rendered as a line rather than an avoidance area.
+        Mirrors that method's structure and reuses the same per-event ``geometry()``
+        call, which is cache-backed at the ``Source`` layer (``cache_ttl_s``), so calling
+        both in the same tool turn costs at most one live round trip per event, not two.
+        """
+        events = self.events_near_region()
+        tracks: list[dict[str, Any]] = []
+        observations: list[Observation] = []
+
+        for ev in events:
+            geo, raw = self.geometry(ev.event_id, ev.episode_id)
+            prov = self.provenance(
+                raw,
+                issued_at=ev.from_date,
+                valid_from=ev.from_date,
+                notes=(
+                    f"GDACS tropical cyclone track for {ev.name} "
+                    f"(event {ev.event_id}/{ev.episode_id})."
+                ),
+            )
+            segments = geo.get("track", [])
+            for feat in segments:
+                tagged = dict(feat)
+                props = dict(feat.get("properties") or {})
+                props.update({
+                    "hazard_class": "cyclone_track",
+                    "event_name": ev.name,
+                    "alert_level": ev.alert_level,
+                })
+                tagged["properties"] = props
+                tracks.append(tagged)
+
+            observations.append(
+                self.observe(
+                    "cyclone_track_segment_count",
+                    len(segments),
+                    "count",
+                    ev.lat if ev.lat is not None else self.region.centre[0],
+                    ev.lon if ev.lon is not None else self.region.centre[1],
+                    valid_time=raw.acquired_at,
+                    provenance=prov,
+                    event_id=ev.event_id,
+                    episode_id=ev.episode_id,
+                    event_name=ev.name,
+                )
+            )
+
+        return tracks, observations
+
     # -- generic Source contract ----------------------------------------------------
 
     def parse(self, raw: FetchResult, **kw: Any) -> list[Observation]:

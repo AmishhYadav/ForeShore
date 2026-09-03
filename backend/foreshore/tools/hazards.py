@@ -12,6 +12,13 @@ the other answers, this tool still returns what it has, marked ``partial=True`` 
 failed source named in ``missing`` -- a missing input never becomes a bare failure when
 half the answer survived.
 
+``payload["polygons"]`` (cone + red/orange wind-radii, from GDACS) and
+``payload["cyclone_track"]`` (a GeoJSON ``FeatureCollection`` of the storm's observed +
+forecast ``LineString`` track, also from GDACS) are kept distinct on purpose: the console
+map draws them as different things -- an avoidance area versus a path -- per PLAN.md
+Phase 6's "cyclone track and cone overlaid". Both degrade to an empty-but-valid
+collection when there is no active cyclone near the region, never an error.
+
 Adapters (:class:`foreshore.sources.gdacs.GDACSCyclones`,
 :class:`foreshore.sources.imd_geoserver.IMDGeoServer`) are imported lazily inside the
 tool function so a half-written or temporarily failing adapter module cannot prevent
@@ -79,7 +86,9 @@ def _event_label(event: dict[str, Any]) -> str:
     number=12,
     description=(
         "Active tropical-cyclone hazard check: union of GDACS tropical-cyclone events "
-        "near the region (with cone/wind-radii polygons) and the IMD cyclone track. "
+        "near the region (with cone/wind-radii exclusion polygons in payload['polygons'] "
+        "and the storm's own observed+forecast track as a GeoJSON LineString "
+        "FeatureCollection in payload['cyclone_track']) and the IMD cyclone track. "
         "Zero active hazards is a valid, positive result, not an error -- use this to "
         "confirm there is no cyclone threat as much as to retrieve one that exists."
     ),
@@ -135,6 +144,7 @@ def get_hazard_alerts(
 
     observations: list[Observation] = []
     polygons: list[dict[str, Any]] = []
+    cyclone_track_features: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     missing: list[str] = []
     errors: list[str] = []
@@ -147,11 +157,15 @@ def get_hazard_alerts(
         gdacs = GDACSCyclones(region=region)
         near_events = gdacs.events_near_region()
         polys, gdacs_obs = gdacs.exclusion_polygons()
+        track_feats, track_obs = gdacs.track_lines()
         if custom_bbox:
             near_events = [e for e in near_events if _in_bbox(e.lat, e.lon, active_bbox)]
             polys = [p for p in polys if _feature_overlaps_bbox(p, active_bbox)]
+            track_feats = [t for t in track_feats if _feature_overlaps_bbox(t, active_bbox)]
         polygons.extend(polys)
+        cyclone_track_features.extend(track_feats)
         observations.extend(gdacs_obs)
+        observations.extend(track_obs)
         events.extend(e.to_dict() for e in near_events)
         gdacs_ok = True
     except Exception as exc:  # noqa: BLE001 - one source failing must not sink the tool
@@ -196,7 +210,12 @@ def get_hazard_alerts(
                 "the IMD cyclone track); hazard status is unknown, not confirmed clear."
             ),
             missing=missing,
-            payload={"events": [], "polygons": [], "no_active_hazard": False},
+            payload={
+                "events": [],
+                "polygons": [],
+                "cyclone_track": {"type": "FeatureCollection", "features": []},
+                "no_active_hazard": False,
+            },
         )
 
     partial = bool(missing)
@@ -214,7 +233,12 @@ def get_hazard_alerts(
         )
         if partial:
             summary += f" One source could not be checked ({'; '.join(errors)})."
-        payload: dict[str, Any] = {"events": [], "polygons": [], "no_active_hazard": True}
+        payload: dict[str, Any] = {
+            "events": [],
+            "polygons": [],
+            "cyclone_track": {"type": "FeatureCollection", "features": []},
+            "no_active_hazard": True,
+        }
     else:
         labels = sorted({_event_label(e) for e in events})
         summary = (
@@ -223,7 +247,12 @@ def get_hazard_alerts(
         )
         if partial:
             summary += f" One source failed to respond ({'; '.join(errors)}); showing the other."
-        payload = {"events": events, "polygons": polygons, "no_active_hazard": False}
+        payload = {
+            "events": events,
+            "polygons": polygons,
+            "cyclone_track": {"type": "FeatureCollection", "features": cyclone_track_features},
+            "no_active_hazard": False,
+        }
 
     if parse_note:
         summary += f" ({parse_note})"
