@@ -63,6 +63,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Sequence
 
 import numpy as np
@@ -395,7 +396,7 @@ class CostField:
         return out
 
 
-def build_cost_field(
+def _build_cost_field_uncached(
     bbox: tuple[float, float, float, float] | None = None,
     *,
     when: datetime | None = None,
@@ -403,6 +404,16 @@ def build_cost_field(
     region_id: str | None = None,
     extra_exclusions: Sequence[dict] | None = None,
 ) -> CostField:
+    """The real cost-field build -- INCOIS OSF wave/wind/current fetch + regrid, IMBL
+    proximity sampling, bathymetry sampling, all of it, every time it is called. Measured
+    at ~11 s for the demo region, dominated by :func:`_imbl_distance_grid`'s per-cell
+    IMBL-proximity sampling and the wave/wind grid regridding over a ~260x290 cell grid.
+
+    Not meant to be called directly outside this module -- :func:`build_cost_field` is
+    the public entry point and puts a small bounded cache in front of this for the common
+    (whole-region, no dynamic exclusions) case. Kept as a separate function, rather than
+    inlined, purely so the cache wrapper below has something precise to memoize and a
+    test has something precise to count calls to."""
     region = load_region(region_id)
     routing_cfg = load_routing_config()
     vessel = load_vessels().get(vessel_class_id)
@@ -598,6 +609,68 @@ def build_cost_field(
         lats=lats, lons=lons, cost=cost, terms=terms, blocked_reason=blocked_reason,
         provenance=provenance, evidence=evidence, meta=meta,
         current_speed_kn=current_speed_kn, current_dir_deg=current_dir_deg,
+    )
+
+
+#: In-process cache in front of :func:`_build_cost_field_uncached`, keyed on exactly the
+#: three things the built field actually depends on for the common (whole-region, no
+#: dynamic exclusions) call shape: the *active* region id, the resolved vessel class id,
+#: and ``when`` rounded down to the start of its containing hour. ``maxsize=16`` bounds
+#: memory for a long-running demo process -- one region x a couple of vessel classes x a
+#: handful of hours already comfortably covers a real rehearsal or live-demo session, and
+#: an evicted/cold combination just falls back to a normal (slow) rebuild, never an error.
+#:
+#: Hourly bucketing is deliberately coarser than anything driving a stale-data concern:
+#: INCOIS OSF wave/wind/current grids lag ~2 days and the IMD bulletin/static layers
+#: (bathymetry, coastline, IMBL) change less often than that, so reusing a build from
+#: earlier in the same hour cannot surface data staler than the source data already is --
+#: it only saves the ~11 s of local recomputation over already-fetched/cached source data
+#: (network-level caching for the sources themselves lives separately in
+#: ``store/cache.py`` and is untouched by this).
+@lru_cache(maxsize=16)
+def _build_cost_field_cached(region_id: str, vessel_class_id: str, when_bucket: datetime) -> CostField:
+    return _build_cost_field_uncached(
+        None, when=when_bucket, vessel_class_id=vessel_class_id, region_id=region_id,
+        extra_exclusions=None,
+    )
+
+
+def build_cost_field(
+    bbox: tuple[float, float, float, float] | None = None,
+    *,
+    when: datetime | None = None,
+    vessel_class_id: str | None = None,
+    region_id: str | None = None,
+    extra_exclusions: Sequence[dict] | None = None,
+) -> CostField:
+    """Build (or reuse a cached) A* routing cost field.
+
+    ``_build_cost_field_uncached`` is a pure function of (the active region, the vessel
+    class, the ``when`` instant it samples time-varying grids for) given whatever source
+    data is available at call time -- so for the common case this codebase actually
+    calls it with (whole-region ``bbox``, i.e. ``None``, and no ``extra_exclusions`` --
+    true for both ``tools/routing_tools.py``'s ``plan_route`` and
+    ``tests/test_astar.py``), the result is safe to compute once per (region, vessel
+    class, hour) and reuse. This resolves the *active* region id and vessel class id the
+    exact same way ``_build_cost_field_uncached`` itself would (``load_region``/
+    ``load_vessels`` -- no new global invented) and serves the result from
+    :func:`_build_cost_field_cached`.
+
+    A caller-supplied ``bbox`` or ``extra_exclusions`` (e.g. a dynamic hazard polygon)
+    bypasses the cache entirely and always builds fresh: neither is part of the cache
+    key, so caching them under the same (region, vessel, hour) key would risk silently
+    returning a field for the wrong area or missing a hazard polygon it was never asked
+    to account for.
+    """
+    if bbox is None and extra_exclusions is None:
+        region = load_region(region_id)
+        vessel = load_vessels().get(vessel_class_id)
+        when_resolved = when or utcnow()
+        when_bucket = when_resolved.replace(minute=0, second=0, microsecond=0)
+        return _build_cost_field_cached(region.region_id, vessel.class_id, when_bucket)
+    return _build_cost_field_uncached(
+        bbox, when=when, vessel_class_id=vessel_class_id, region_id=region_id,
+        extra_exclusions=extra_exclusions,
     )
 
 

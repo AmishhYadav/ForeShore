@@ -24,10 +24,12 @@ fake router is instantly visible to an ISRO judge."* Three things are under test
 from __future__ import annotations
 
 import math
+from datetime import datetime
 
 import numpy as np
 import pytest
 from foreshore.config import load_region, load_routing_config, load_vessels
+from foreshore.routing import costfield as costfield_module
 from foreshore.routing.astar import find_route
 from foreshore.routing.costfield import CostField, build_cost_field
 from foreshore.store.vectors import VectorStore
@@ -360,3 +362,54 @@ def test_router_bends_around_the_imbl_hard_buffer_near_rameswaram():
 
     # the route is a genuine detour, not the (blocked) straight line
     assert route.total_distance_nm > route.direct_distance_nm
+
+
+# --------------------------------------------------------------------------------------
+# 4. Cost-field caching -- build_cost_field must not rebuild within the same
+#    (region, vessel class, hour-bucket) key. This is the fix for the ~11 s-per-call
+#    live-demo latency risk described in the task: a judge asking a second, nearby
+#    routing question during the demo must not pay the full build cost again.
+# --------------------------------------------------------------------------------------
+
+
+def test_build_cost_field_reuses_the_same_field_within_one_hour_bucket(monkeypatch):
+    """Two calls with the same region/vessel and departures fifteen minutes apart --
+    still inside the same hour bucket -- must hit the cost-field cache: the expensive
+    uncached builder runs exactly once, and the second call gets back the identical
+    (by object identity) CostField rather than a freshly rebuilt equal one."""
+    costfield_module._build_cost_field_cached.cache_clear()
+
+    real_uncached = costfield_module._build_cost_field_uncached
+    calls: list[int] = []
+
+    def _counting_uncached(*args, **kwargs):
+        calls.append(1)
+        return real_uncached(*args, **kwargs)
+
+    monkeypatch.setattr(costfield_module, "_build_cost_field_uncached", _counting_uncached)
+
+    when_a = datetime(2026, 9, 1, 6, 5, 0)
+    when_b = datetime(2026, 9, 1, 6, 47, 0)  # same hour bucket as when_a, different minute
+
+    field1 = costfield_module.build_cost_field(
+        region_id="palk_bay_gom", vessel_class_id="small_motorised", when=when_a,
+    )
+    field2 = costfield_module.build_cost_field(
+        region_id="palk_bay_gom", vessel_class_id="small_motorised", when=when_b,
+    )
+
+    assert len(calls) == 1, (
+        "the second call fell inside the same hour bucket as the first and must have "
+        "been served from cache, not rebuilt from scratch"
+    )
+    assert field2 is field1
+
+    # -- a different hour bucket is a genuine cache miss and rebuilds ------------------
+    when_c = datetime(2026, 9, 1, 7, 5, 0)
+    field3 = costfield_module.build_cost_field(
+        region_id="palk_bay_gom", vessel_class_id="small_motorised", when=when_c,
+    )
+    assert len(calls) == 2
+    assert field3 is not field1
+
+    costfield_module._build_cost_field_cached.cache_clear()
