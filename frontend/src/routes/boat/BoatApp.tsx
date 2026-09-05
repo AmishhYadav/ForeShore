@@ -26,6 +26,7 @@
  *     not at all once it has passed its own `valid_to`.
  */
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ApiError, getGeofencesGeoJson, getRegion, postQuery } from "@shared/api";
 import { activeVoiceAdapter } from "@shared/voice";
 import {
@@ -260,10 +261,14 @@ export default function BoatApp() {
   return (
     <div className="boat-app">
       <header className="boat-app__header">
-        <div className="boat-app__brand">
+        <Link
+          to="/?landing=true"
+          className="boat-app__brand"
+          title="Return to Foreshore overview"
+        >
           <span className="boat-app__brand-mark" aria-hidden="true" />
           FORESHORE
-        </div>
+        </Link>
         <OfflineToggle offline={offline} browserOffline={browserOffline} onChange={handleOfflineToggle} />
       </header>
 

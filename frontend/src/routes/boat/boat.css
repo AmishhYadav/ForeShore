@@ -40,6 +40,16 @@
   letter-spacing: 0.08em;
   font-size: 15px;
   color: var(--ink-50);
+  text-decoration: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.boat-app__brand:hover {
+  opacity: 0.85;
+}
+
+.boat-app__brand:active {
+  transform: scale(0.98);
 }
 
 .boat-app__brand-mark {
