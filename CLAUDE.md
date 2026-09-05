@@ -4,6 +4,7 @@ Operational context for Claude Code. Read this before touching anything.
 
 - Background, rationale, competitive position: `PROJECT_CONTEXT.md`
 - Phased implementation plan with contracts, endpoints and demo script: `PLAN.md`
+- Phases 10–13 upgrade plan — PS gap closure and the NavIC downlink: `PLAN_V2.md`
 
 **Last verified against live sources: 2026-08-30.** Every endpoint below was probed directly,
 not taken from documentation. Re-run `scripts/healthcheck.py` each morning — operational
@@ -287,6 +288,12 @@ Keep a second region file (`gujarat_sir_creek.yaml`) working purely to demonstra
   per-leg cost breakdown so the UI can explain *why* the route bends.
 - **Agent orchestration is hand-rolled** over Anthropic tool use — not LangChain/LangGraph.
   Full control of the stored trace, fewer unknowns, and it differentiates from the field.
+- `FORESHORE_LLM_PROVIDER` selects the wire format: `anthropic` (production) or `nvidia`
+  (free NIM catalogue at `integrate.api.nvidia.com`, OpenAI-compatible — used for testing
+  without API spend; `backend/foreshore/agents/runtime.py`'s `NvidiaNimClient` is the
+  adapter). Same `AgentRuntime` loop, same trace, same tool schemas either way — only the
+  request/response shape on the wire differs. No key for the selected provider still
+  degrades to `ScriptedClient`, same as always.
 - Every tool call and result is persisted as a reasoning trace, retrievable and renderable.
   Explainability is a stored artifact, not post-hoc LLM narration.
 - Ingestion jobs are idempotent and record granule acquisition time on write.

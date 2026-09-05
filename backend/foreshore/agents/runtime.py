@@ -30,12 +30,21 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
+import httpx
+
 from ..config import env
 from ..models import Observation, ToolResult, TraceStep, utcnow
 from ..store.traces import TraceStore, digest, new_step
 from ..tools.registry import ToolRegistry, registry as default_registry
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
+#: meta/llama-3.1-8b-instruct: confirmed function-calling support, fastest tool-calling
+#: model in the free NIM catalogue at 8B — picked for testing-phase latency over quality.
+#: Swap to a bigger NIM model (e.g. qwen/qwen2.5-72b-instruct) if Tamil prose quality
+#: matters more than turnaround during a test run; 8B is not an officially-listed
+#: Tamil-fluent model.
+DEFAULT_NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 MAX_TURNS = 8
 
 
@@ -124,6 +133,127 @@ class AnthropicClient(LLMClient):
         )
 
 
+class NvidiaNimClient(LLMClient):
+    """NVIDIA NIM (build.nvidia.com), free tier, for testing without Anthropic spend.
+
+    NIM's ``integrate.api.nvidia.com`` endpoint is OpenAI-compatible, not Anthropic-
+    compatible — this class is the adapter, not a copy of :class:`AnthropicClient`. Same
+    interface (``system``, Anthropic-shaped ``messages`` in, one :class:`LLMTurn` out) so
+    :class:`AgentRuntime` does not know which wire format is underneath.
+    """
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.model = model or env("FORESHORE_LLM_MODEL", DEFAULT_NVIDIA_MODEL) or DEFAULT_NVIDIA_MODEL
+        self._key = api_key or env("NVIDIA_API_KEY")
+        self.name = f"nvidia:{self.model}"
+        self.available = bool(self._key)
+
+    def turn(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        max_tokens: int = 2048,
+        temperature: float = 0.0,
+    ) -> LLMTurn:
+        if not self._key:
+            raise RuntimeError("NVIDIA NIM client unavailable (no NVIDIA_API_KEY)")
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": _anthropic_messages_to_openai(system, messages),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if tools:
+            payload["tools"] = [_anthropic_tool_to_openai(t) for t in tools]
+            payload["tool_choice"] = "auto"
+        if self.model.startswith("nvidia/nemotron"):
+            # Nemotron reasoning models emit a "thinking" trace before the answer by
+            # default — extra latency and tokens per turn we don't want on the tool-call
+            # hot path. Off switch is a chat-template flag, not a normal API parameter.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        resp = httpx.post(
+            NVIDIA_BASE_URL,
+            headers={"Authorization": f"Bearer {self._key}", "Accept": "application/json"},
+            json=payload,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        message = data["choices"][0]["message"]
+        text = (message.get("content") or "").strip()
+        calls: list[dict[str, Any]] = []
+        for tc in message.get("tool_calls") or []:
+            fn = tc["function"]
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            calls.append({"id": tc["id"], "name": fn["name"], "input": args})
+        finish = data["choices"][0].get("finish_reason") or "stop"
+        stop_reason = {
+            "tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens",
+        }.get(finish, finish)
+        return LLMTurn(text=text, tool_calls=calls, stop_reason=stop_reason, raw=data)
+
+
+def _anthropic_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+        },
+    }
+
+
+def _anthropic_messages_to_openai(
+    system: str, messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Convert the Anthropic-block message list the loop builds into OpenAI chat form.
+
+    The loop only ever produces three shapes: a plain-string user turn, an assistant
+    turn of ``text``/``tool_use`` blocks, and a user turn of ``tool_result`` blocks. OpenAI
+    has no grouped tool-result message — each becomes its own ``role: tool`` message.
+    """
+    out: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        if isinstance(content, str):
+            out.append({"role": role, "content": content})
+            continue
+        if role == "assistant":
+            text = "\n".join(b["text"] for b in content if b.get("type") == "text")
+            tool_uses = [b for b in content if b.get("type") == "tool_use"]
+            entry: dict[str, Any] = {"role": "assistant", "content": text or None}
+            if tool_uses:
+                entry["tool_calls"] = [
+                    {
+                        "id": b["id"],
+                        "type": "function",
+                        "function": {"name": b["name"], "arguments": json.dumps(b["input"])},
+                    }
+                    for b in tool_uses
+                ]
+            out.append(entry)
+        else:
+            for b in content:
+                if b.get("type") == "tool_result":
+                    out.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": b["tool_use_id"],
+                            "content": b.get("content") or "",
+                        }
+                    )
+                elif b.get("type") == "text":
+                    out.append({"role": "user", "content": b["text"]})
+    return out
+
+
 class ScriptedClient(LLMClient):
     """Deterministic stand-in used when no API key is configured.
 
@@ -168,8 +298,19 @@ class ScriptedClient(LLMClient):
 
 
 def make_client(api_key: str | None = None, model: str | None = None) -> LLMClient:
-    """Real client when a key is present, scripted otherwise. Never raises."""
-    client = AnthropicClient(api_key=api_key, model=model)
+    """Real client for the configured provider, scripted otherwise. Never raises.
+
+    ``FORESHORE_LLM_PROVIDER`` picks the wire format (``anthropic`` default, or
+    ``nvidia`` for the free NIM catalogue used during testing). Missing/invalid key for
+    the selected provider degrades to :class:`ScriptedClient`, same as before — a live
+    demo cannot die on a missing key or dead endpoint.
+    """
+    provider = (env("FORESHORE_LLM_PROVIDER", "anthropic") or "anthropic").strip().lower()
+    client: LLMClient
+    if provider == "nvidia":
+        client = NvidiaNimClient(api_key=api_key, model=model)
+    else:
+        client = AnthropicClient(api_key=api_key, model=model)
     return client if client.available else ScriptedClient()
 
 
@@ -476,6 +617,7 @@ def _evidence_block(results: Sequence[ToolResult]) -> str:
 
 
 __all__ = [
-    "AgentRuntime", "RunResult", "LLMClient", "LLMTurn", "AnthropicClient", "ScriptedClient",
-    "make_client", "check_unsourced_numbers", "DEFAULT_MODEL", "MAX_TURNS",
+    "AgentRuntime", "RunResult", "LLMClient", "LLMTurn", "AnthropicClient", "NvidiaNimClient",
+    "ScriptedClient", "make_client", "check_unsourced_numbers", "DEFAULT_MODEL",
+    "DEFAULT_NVIDIA_MODEL", "MAX_TURNS",
 ]

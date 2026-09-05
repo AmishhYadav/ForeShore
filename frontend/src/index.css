@@ -1,12 +1,17 @@
-/* Shared design tokens — both /boat and /console build on this palette so the two
-   surfaces read as one product family, not two unrelated apps. Maritime, high-contrast,
-   safety-instrument feel (think ECDIS/bridge display, not a consumer weather app):
-   deep navy grounds, a restrained accent, and verdict colours that are load-bearing UI,
-   not decoration — GO/CAUTION/DO_NOT_ADVISE must be instantly distinguishable at a
-   glance, including to a colour-blind viewer (paired with icon + label, never colour
-   alone). */
+/* ============================================================================
+   FORESHORE — Global Design Tokens & Utilities
+   Marine Intelligence System design system (Stitch-derived)
+   ============================================================================
+   Both /boat and /console build on this palette so the two surfaces read as one
+   product family, not two unrelated apps. Maritime, high-contrast, safety-instrument
+   feel: deep navy grounds, glassmorphism cards, and verdict colours that are
+   load-bearing UI, not decoration.
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
+  /* ── Existing Ink Palette (preserved for boat/console components) ──────── */
   --ink-950: #06131f;
   --ink-900: #0b1f30;
   --ink-800: #0f2b40;
@@ -19,6 +24,7 @@
   --accent: #ff9d3c;
   --accent-dim: #b76a1f;
 
+  /* ── Verdict Colours (load-bearing UI, never colour alone) ────────────── */
   --verdict-go: #1fa37a;
   --verdict-go-bg: #0f2e26;
   --verdict-caution: #e0a815;
@@ -26,23 +32,82 @@
   --verdict-stop: #d9483f;
   --verdict-stop-bg: #341210;
 
+  /* ── Geofence Severity ────────────────────────────────────────────────── */
   --severity-legal: #d9483f;
   --severity-hazard: #e0a815;
   --severity-restricted: #c77bd6;
   --severity-advisory: #4fa3d1;
 
-  /* Map-layer colours for tool 7/8/12 passthroughs (PFZ official/derived, hazard/track).
-     Deliberately distinct from every colour above and from each other — CLAUDE.md: never
-     let a derived product read as the official INCOIS advisory, and PLAN.md Phase 6 wants
-     cyclone track and cone as two distinct visual things, not one. */
+  /* ── Map Layer Colours (PFZ, hazard track) ─────────────────────────────── */
   --pfz-official: #2dd4bf;
   --pfz-derived: #7c93ff;
   --hazard-track: #ff5da2;
 
+  /* ── Marine Intelligence Design System (Stitch) ────────────────────────── */
+  --marine-navy: #0b1f30;
+  --marine-navy-deep: #06131f;
+  --marine-teal: #0d4f4f;
+  --marine-aqua: #1ba3a3;
+  --marine-aqua-bright: #2dd4bf;
+  --marine-surface: #131315;
+  --marine-surface-dim: #0d0e10;
+  --marine-surface-container: #1f2021;
+  --marine-surface-high: #292a2b;
+  --marine-on-surface: #e4e2e3;
+  --marine-on-surface-variant: #c4c6cd;
+  --marine-outline: #8e9197;
+  --marine-outline-variant: #43474c;
+  --marine-primary: #b5c8df;
+  --marine-secondary: #97d1d0;
+  --marine-tertiary: #e5c09c;
+  --marine-amber: #f59e0b;
+  --marine-amber-dark: #d97706;
+
+  /* ── Glass Card Tokens ─────────────────────────────────────────────────── */
+  --glass-bg: rgba(31, 32, 33, 0.7);
+  --glass-bg-light: rgba(31, 32, 33, 0.5);
+  --glass-border-start: rgba(255, 255, 255, 0.15);
+  --glass-border-end: rgba(255, 255, 255, 0.05);
+  --glass-blur: 20px;
+  --glass-blur-nav: 16px;
+
+  /* ── Typography ─────────────────────────────────────────────────────────── */
+  --font-headline: "Outfit", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", "Geist", system-ui, -apple-system, sans-serif;
   --font-sans: "Inter", "Noto Sans Tamil", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", "Fira Code", monospace;
+
+  /* ── Spacing (8px root) ─────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  /* ── Border Radius ─────────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Transitions ────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
 
   color-scheme: dark;
 }
+
+/* ============================================================================
+   BASE RESET
+   ============================================================================ */
 
 * {
   box-sizing: border-box;
@@ -56,18 +121,184 @@ body,
 
 body {
   margin: 0;
-  font-family: var(--font-sans);
+  font-family: var(--font-body);
   background: var(--ink-950);
   color: var(--ink-50);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font-family: inherit;
 }
 
 a {
   color: inherit;
+  text-decoration: none;
+}
+
+/* ============================================================================
+   ANIMATION KEYFRAMES LIBRARY
+   ============================================================================ */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInLeft {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fadeInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(27, 163, 163, 0.4); }
+  50% { transform: scale(1.05); box-shadow: 0 0 20px 10px rgba(27, 163, 163, 0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes waveFlow {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes ripple {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+@keyframes tabIndicator {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes bubbleRise {
+  0% { transform: translateY(100vh) scale(0); opacity: 0; }
+  10% { opacity: 0.6; }
+  90% { opacity: 0.3; }
+  100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+}
+
+/* ============================================================================
+   GLASSMORPHISM UTILITY CLASSES
+   ============================================================================ */
+
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid;
+  border-image-source: linear-gradient(
+    135deg,
+    var(--glass-border-start),
+    var(--glass-border-end)
+  );
+  border-image-slice: 1;
+  border-radius: var(--radius-lg);
+}
+
+.glass-card-solid {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+}
+
+.glass-nav {
+  background: rgba(11, 31, 48, 0.75);
+  backdrop-filter: blur(var(--glass-blur-nav));
+  -webkit-backdrop-filter: blur(var(--glass-blur-nav));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ============================================================================
+   UTILITY ANIMATION CLASSES
+   ============================================================================ */
+
+.animate-fade-in { animation: fadeIn var(--duration-normal) var(--ease-out) both; }
+.animate-fade-in-up { animation: fadeInUp var(--duration-slow) var(--ease-out) both; }
+.animate-fade-in-down { animation: fadeInDown var(--duration-normal) var(--ease-out) both; }
+.animate-fade-in-left { animation: fadeInLeft var(--duration-slow) var(--ease-out) both; }
+.animate-fade-in-right { animation: fadeInRight var(--duration-slow) var(--ease-out) both; }
+.animate-scale-in { animation: scaleIn var(--duration-normal) var(--ease-spring) both; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+
+/* Staggered animation delays */
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }
+.delay-500 { animation-delay: 500ms; }
+.delay-600 { animation-delay: 600ms; }
+.delay-700 { animation-delay: 700ms; }
+
+/* ============================================================================
+   SCROLLBAR STYLING
+   ============================================================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--marine-outline-variant);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--marine-outline);
 }

@@ -2,6 +2,11 @@
  * `/boat` — the fisherman-facing surface. Tamil-first, voice-first, verdict-first: the
  * verdict card is the emotional/functional centre of the whole pitch (PLAN.md Phase 5).
  *
+ * Now organised into three tabs via a bottom navigation bar:
+ *   - Ask: verdict card + voice/text input + transcript
+ *   - Map: MapView + RouteSummary + AlertBanner
+ *   - Evidence: EvidencePanel + ScenarioCompare
+ *
  * Two data paths, mirroring CLAUDE.md's architecture:
  *   - request path: postQuery() -> verdict + evidence panel + route + map, spoken back
  *     in whatever language the backend mirrored.
@@ -53,6 +58,8 @@ const DEFAULT_LABELS: Record<string, string> = {
   unavailable: "not available",
 };
 
+type BoatTab = "ask" | "map" | "evidence";
+
 export default function BoatApp() {
   const [region, setRegion] = useState<RegionInfo | null>(null);
   const [manualOffline, setManualOfflineLocal] = useState(false);
@@ -69,12 +76,9 @@ export default function BoatApp() {
   const [geofenceFC, setGeofenceFC] = useState<GeoJSON.FeatureCollection | null>(null);
   const [cachedDecision, setCachedDecision] = useState<CachedDecision | undefined>(undefined);
 
+  const [activeTab, setActiveTab] = useState<BoatTab>("ask");
+
   // -- bootstrap: region config -----------------------------------------------------------
-  // Guarded by `offline` like every other network call: if the device is offline the
-  // instant this mounts, this simply waits for `offline` to become false rather than
-  // firing once regardless. (Cold-starting the whole app with zero prior cache while
-  // genuinely offline is an inherent PWA limitation — there is no region config to fall
-  // back to client-side until one online session has primed it.)
   useEffect(() => {
     if (offline || region) return;
     let cancelled = false;
@@ -128,8 +132,7 @@ export default function BoatApp() {
     };
   }, [offline]);
 
-  // -- cached decision: kept warm at all times (a local IndexedDB read, not a network
-  // call) so it is ready the instant the user flips "No signal" -------------------------
+  // -- cached decision: kept warm at all times -------------------------
   useEffect(() => {
     let cancelled = false;
     getCachedDecision()
@@ -195,17 +198,11 @@ export default function BoatApp() {
     }
   }
 
-  // Single source of truth for everything below the toggle: the live outcome when
-  // online, or the cached one when offline and *still within its own validity window* —
-  // an expired cached verdict is never treated as if it were current.
+  // Single source of truth for everything below the toggle
   const cachedStillValid = Boolean(cachedDecision && isDecisionStillValid(cachedDecision));
   const activeOutcome: QueryOutcome | null = offline ? (cachedStillValid ? cachedDecision!.outcome : null) : outcome;
   const activeLabels = activeOutcome?.payloads?.labels ?? DEFAULT_LABELS;
   const activeLanguage = activeOutcome?.language ?? region?.primary_language ?? "en";
-  // Tolerant read: `docs/API.md`/`shared/types.ts` document `verdict_copy` as
-  // `{headline, reason}`, but the running backend's `agents/synthesis.py::VERDICT_COPY`
-  // actually emits `{headline, lead}` — no `reason` key exists at runtime. Prefer
-  // whichever is present; flagged in the handoff report.
   const rawVerdictCopy = activeOutcome?.payloads?.verdict_copy as Record<string, unknown> | null | undefined;
   const activeCopy = rawVerdictCopy
     ? { headline: String(rawVerdictCopy.headline ?? ""), reason: String(rawVerdictCopy.reason ?? rawVerdictCopy.lead ?? "") }
@@ -244,67 +241,110 @@ export default function BoatApp() {
       </header>
 
       <main className="boat-app__main">
-        {activeOutcome?.scenario ? (
-          <ScenarioCompare scenario={activeOutcome.scenario} labels={activeLabels} />
-        ) : (
-          <VerdictCard
-            verdict={activeOutcome?.verdict ?? null}
-            copy={activeCopy}
-            labels={activeLabels}
-            stale={offline}
-            staleNotice={staleNotice}
-            emptyHeadline={emptyHeadline}
-            emptyMessage={emptyMessage}
-          />
-        )}
+        {/* ── Ask Tab ──────────────────────────────────────── */}
+        <div className={`boat-tab-panel${activeTab === "ask" ? " boat-tab-panel--active" : ""}`}>
+          {activeOutcome?.scenario ? (
+            <ScenarioCompare scenario={activeOutcome.scenario} labels={activeLabels} />
+          ) : (
+            <VerdictCard
+              verdict={activeOutcome?.verdict ?? null}
+              copy={activeCopy}
+              labels={activeLabels}
+              stale={offline}
+              staleNotice={staleNotice}
+              emptyHeadline={emptyHeadline}
+              emptyMessage={emptyMessage}
+            />
+          )}
 
-        <AlertBanner alerts={proximity.alerts} offline={offline} hasData={proximity.hasData} />
+          <section className="ask-section">
+            <VoiceInput
+              onSubmit={handleAsk}
+              disabled={offline || queryLoading || !position.ready}
+              disabledReason={
+                offline
+                  ? "No signal — new questions unavailable. Showing the last saved advisory."
+                  : !position.ready
+                    ? "Finding your position before asking…"
+                    : queryLoading
+                      ? "Thinking…"
+                      : undefined
+              }
+            />
+            {queryError ? <div className="ask-section__error">{queryError}</div> : null}
+            {!offline && lastQuestion && activeOutcome ? (
+              <div className="ask-section__transcript">
+                <div className="ask-section__question">"{lastQuestion}"</div>
+                <div className="ask-section__answer">{activeOutcome.text}</div>
+              </div>
+            ) : null}
+          </section>
+        </div>
 
-        <section className="ask-section">
-          <VoiceInput
-            onSubmit={handleAsk}
-            disabled={offline || queryLoading || !position.ready}
-            disabledReason={
-              offline
-                ? "No signal — new questions unavailable. Showing the last saved advisory."
-                : !position.ready
-                  ? "Finding your position before asking…"
-                  : queryLoading
-                    ? "Thinking…"
-                    : undefined
-            }
+        {/* ── Map Tab ──────────────────────────────────────── */}
+        <div className={`boat-tab-panel${activeTab === "map" ? " boat-tab-panel--active" : ""}`}>
+          <AlertBanner alerts={proximity.alerts} offline={offline} hasData={proximity.hasData} />
+
+          <MapView
+            region={region}
+            position={position}
+            geofenceGeoJson={geofenceFC}
+            route={(activeOutcome?.route as unknown as Record<string, unknown> | undefined) ?? null}
           />
-          {queryError ? <div className="ask-section__error">{queryError}</div> : null}
-          {!offline && lastQuestion && activeOutcome ? (
-            <div className="ask-section__transcript">
-              <div className="ask-section__question">“{lastQuestion}”</div>
-              <div className="ask-section__answer">{activeOutcome.text}</div>
-            </div>
+
+          {activeOutcome?.route ? (
+            <RouteSummary
+              route={activeOutcome.route as unknown as Record<string, unknown>}
+              heading={activeLabels.route ?? DEFAULT_LABELS.route}
+            />
           ) : null}
-        </section>
+        </div>
 
-        <MapView
-          region={region}
-          position={position}
-          geofenceGeoJson={geofenceFC}
-          route={(activeOutcome?.route as unknown as Record<string, unknown> | undefined) ?? null}
-        />
-
-        {activeOutcome?.route ? (
-          <RouteSummary
-            route={activeOutcome.route as unknown as Record<string, unknown>}
-            heading={activeLabels.route ?? DEFAULT_LABELS.route}
-          />
-        ) : null}
-
-        {activeOutcome ? (
-          <EvidencePanel
-            rows={(activeOutcome.payloads?.evidence_panel ?? []) as unknown as Record<string, unknown>[]}
-            heading={offline ? `${activeLabels.evidence ?? DEFAULT_LABELS.evidence} — cached` : activeLabels.evidence ?? DEFAULT_LABELS.evidence}
-            unsourcedNumbers={activeOutcome.unsourced_numbers}
-          />
-        ) : null}
+        {/* ── Evidence Tab ─────────────────────────────────── */}
+        <div className={`boat-tab-panel${activeTab === "evidence" ? " boat-tab-panel--active" : ""}`}>
+          {activeOutcome ? (
+            <EvidencePanel
+              rows={(activeOutcome.payloads?.evidence_panel ?? []) as unknown as Record<string, unknown>[]}
+              heading={offline ? `${activeLabels.evidence ?? DEFAULT_LABELS.evidence} — cached` : activeLabels.evidence ?? DEFAULT_LABELS.evidence}
+              unsourcedNumbers={activeOutcome.unsourced_numbers}
+            />
+          ) : (
+            <div className="boat-empty-tab">
+              <div className="boat-empty-tab__icon">📋</div>
+              <div className="boat-empty-tab__title">No evidence yet</div>
+              <div className="boat-empty-tab__body">Ask a question first to see the evidence panel with source provenance.</div>
+            </div>
+          )}
+        </div>
       </main>
+
+      {/* ── Bottom Navigation Bar ──────────────────────────── */}
+      <nav className="boat-nav" aria-label="Main navigation">
+        <button
+          type="button"
+          className={`boat-nav__tab${activeTab === "ask" ? " boat-nav__tab--active" : ""}`}
+          onClick={() => setActiveTab("ask")}
+        >
+          <span className="boat-nav__icon">💬</span>
+          <span className="boat-nav__label">Ask</span>
+        </button>
+        <button
+          type="button"
+          className={`boat-nav__tab${activeTab === "map" ? " boat-nav__tab--active" : ""}`}
+          onClick={() => setActiveTab("map")}
+        >
+          <span className="boat-nav__icon">🗺️</span>
+          <span className="boat-nav__label">Map</span>
+        </button>
+        <button
+          type="button"
+          className={`boat-nav__tab${activeTab === "evidence" ? " boat-nav__tab--active" : ""}`}
+          onClick={() => setActiveTab("evidence")}
+        >
+          <span className="boat-nav__icon">📋</span>
+          <span className="boat-nav__label">Evidence</span>
+        </button>
+      </nav>
 
       <footer className="boat-app__footer">
         <span>{positionNote}</span>
