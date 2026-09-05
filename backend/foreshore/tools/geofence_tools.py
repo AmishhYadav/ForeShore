@@ -25,7 +25,7 @@ from typing import Any, Sequence
 
 from ..config import RegionConfig, load_region
 from ..geofence.classes import ALERT_RANK, describe_classes, region_layers
-from ..geofence.engine import GeofenceEngine
+from ..geofence.engine import GeofenceEngine, shared_engine
 from ..models import (
     GeofenceClass,
     GeofenceProximity,
@@ -48,7 +48,6 @@ _DYNAMIC_OR_OPTIONAL_LAYERS: frozenset[str] = frozenset({"hazard_exclusion", "us
 #: unverified, which the caller must be able to distinguish.
 HARD_CLASSES: frozenset[str] = frozenset({"IMBL_HISTORIC_WATERS", "IMBL_MARITIME_BOUNDARY"})
 
-_engine_instance: GeofenceEngine | None = None
 _store_instance: VectorStore | None = None
 
 
@@ -61,12 +60,14 @@ def _store() -> VectorStore:
 
 
 def _engine() -> GeofenceEngine:
-    """Module-level cached :class:`GeofenceEngine` — expensive to build per call, and
-    the push loop calls ``check_geofences`` for every tracked vessel every few seconds."""
-    global _engine_instance
-    if _engine_instance is None:
-        _engine_instance = GeofenceEngine(store=_store())
-    return _engine_instance
+    """The process-wide :class:`GeofenceEngine` — shared with the push loop.
+
+    Shared rather than private on purpose: the push loop is what refreshes the dynamic
+    hazard fences (cyclone cones, wind polygons) each tick, and a private instance here
+    would never see one. This tool is the request path's only hazard-proximity check;
+    it has to look at the same fences the push path does.
+    """
+    return shared_engine()
 
 
 def _required_static_layers(

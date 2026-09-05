@@ -3,9 +3,14 @@ display_name_en: Palk Bay & Gulf of Mannar
 display_name_local: பாக் விரிகுடா மற்றும் மன்னார் வளைகுடா
 bbox: [78.0, 8.0, 80.6, 10.9]          # minlon, minlat, maxlon, maxlat (EPSG:4326)
 timezone: Asia/Kolkata
-primary_language: ta
+# English-first for now: the UI chrome, alert copy and legends all render in the
+# region's primary_language, and mixed-language chrome was unreadable. Detection
+# still mirrors the user — a Tamil query is answered in Tamil — because ta is
+# still listed in `languages`. Flip primary_language back when the full
+# Tamil surface is finished.
+primary_language: en
 fallback_language: en
-languages: [ta, en]
+languages: [en, ta]
 
 anchor_ports:
   - name: Rameswaram
@@ -54,3 +59,14 @@ basemap:
   attribution: "ISRO / NRSC Bhuvan"
   center: [9.3, 79.2]
   zoom: 8
+  # Fallback chart. The Bhuvan tile server currently answers every GetMap with a
+  # ServiceExceptionReport (a Postgres auth failure on ISRO's own backend), which left
+  # the map as a flat blue rectangle. GEBCO is the bathymetric source already listed in
+  # CLAUDE.md's source table, is keyless, and returns real tiles — so an unreachable
+  # ISRO basemap degrades to a real marine chart rather than to nothing. Named in
+  # config, never in the component.
+  fallback:
+    wms_url: "https://wms.gebco.net/mapserv"
+    layer: "GEBCO_LATEST"
+    attribution: "GEBCO Compilation Group"
+    label: "GEBCO bathymetric chart"

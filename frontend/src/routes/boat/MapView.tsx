@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./map.css";
 import { getHazards, getPfzDerived, getPfzOfficial } from "@shared/api";
 import type { HazardsPayload, PfzDerivedPayload, PfzOfficialPayload, RegionInfo } from "@shared/types";
 import { basemapCenterLngLat, severityColor, toLngLat } from "./format";
@@ -32,6 +33,14 @@ const PFZ_DERIVED_COLOR = "#7c93ff";
 const HAZARD_FILL_COLOR = "#e0a815"; // == index.css --severity-hazard: same meaning as the
 // geofence layer's dynamic HAZARD_EXCLUSION class, so it deliberately reuses that colour.
 const HAZARD_TRACK_COLOR = "#ff5da2";
+
+/** One configured raster chart. Both the primary and the fallback are described by the
+ * region config; this component only knows there may be two, never which servers. */
+interface ChartConfig {
+  wmsUrl: string;
+  layer: string;
+  label: string;
+}
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -97,6 +106,23 @@ function probeBasemapTile(wmsUrl: string, layer: string): Promise<boolean> {
   });
 }
 
+/**
+ * `pfzDerived.chlorophyll_reason` is populated straight from the upstream SourceError
+ * when INCOIS chlorophyll data is unavailable, and at runtime that can be a raw
+ * multi-line HTTP error dump (e.g. "SourceError: [incois_osf_chl] NCSS 400 …
+ * <!DOCTYPE HTML …") rather than a human-readable reason. CLAUDE.md's provenance
+ * discipline is about numbers, not error text, but raw HTML/stack output has no
+ * business reaching the UI either way — trim to a short, single-line, markup-free
+ * reason before it's ever interpolated into a note.
+ */
+function shortReason(reason: string): string {
+  const withoutMarkup = reason.split("<")[0]; // drop from the first HTML tag onward
+  const collapsed = withoutMarkup.replace(/\s+/g, " ").trim();
+  const sentenceEnd = collapsed.search(/[.!?](\s|$)/);
+  const firstSentence = sentenceEnd >= 0 ? collapsed.slice(0, sentenceEnd + 1) : collapsed;
+  return firstSentence.length > 120 ? `${firstSentence.slice(0, 120).trim()}…` : firstSentence;
+}
+
 function polygonOnly(fc: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
   return { type: "FeatureCollection", features: fc.features.filter((f) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon") };
 }
@@ -122,8 +148,15 @@ export function MapView({
   const hazardLayerAddedRef = useRef(false);
   const hazardTrackLayerAddedRef = useRef(false);
   const centeredOnceRef = useRef(false);
+  const sizedOnceRef = useRef(false);
+  //: Read inside the ResizeObserver, which outlives the render that created it — a
+  //  captured `position` there would be permanently stale.
+  const positionRef = useRef(position);
+  positionRef.current = position;
   const bhuvanFailedRef = useRef(false);
-  const [basemapFailed, setBasemapFailed] = useState(false);
+  //: "" while probing, then the label of whichever chart is actually painted, or null
+  //  once every configured chart has failed and only the plain ocean remains.
+  const [basemapNote, setBasemapNote] = useState<string | null>("");
   const [mapReady, setMapReady] = useState(false);
   const [pfzOfficial, setPfzOfficial] = useState<PfzOfficialPayload | null>(null);
   const [pfzDerived, setPfzDerived] = useState<PfzDerivedPayload | null>(null);
@@ -133,8 +166,10 @@ export function MapView({
   useEffect(() => {
     if (!region || !containerRef.current || mapRef.current) return;
 
-    const center = basemapCenterLngLat(region.basemap as Record<string, unknown>, region.bbox);
-    const zoomRaw = (region.basemap as Record<string, unknown>)?.zoom;
+    // Captured once so the nested chart loaders below keep the narrowed, non-null value.
+    const basemap = region.basemap as Record<string, unknown>;
+    const center = basemapCenterLngLat(basemap, region.bbox);
+    const zoomRaw = basemap?.zoom;
     const zoom = typeof zoomRaw === "number" ? zoomRaw : 8;
 
     let map: maplibregl.Map;
@@ -156,7 +191,7 @@ export function MapView({
     }
     mapRef.current = map;
 
-    const attribution = String((region.basemap as Record<string, unknown>)?.attribution ?? "");
+    const attribution = String(basemap?.attribution ?? "");
     map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: attribution }));
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
@@ -169,7 +204,9 @@ export function MapView({
       } catch {
         /* map may already be torn down */
       }
-      setBasemapFailed(true);
+      // Losing the primary chart is not the end of the road any more — try the
+      // configured fallback before falling back to plain ocean.
+      void loadChart(fallbackConfig(), true);
     }
 
     map.on("error", (e) => {
@@ -180,44 +217,95 @@ export function MapView({
       dropBhuvan();
     });
 
-    map.on("load", () => {
-      const wmsUrl = String((region.basemap as Record<string, unknown>)?.wms_url ?? "");
-      const layer = String((region.basemap as Record<string, unknown>)?.layer ?? "");
-      if (wmsUrl && layer) {
-        probeBasemapTile(wmsUrl, layer).then((ok) => {
-          if (bhuvanFailedRef.current) return; // torn down or already failed meanwhile
-          if (!ok) {
-            setBasemapFailed(true);
-            return;
-          }
-          try {
-            map.addSource("bhuvan", {
-              type: "raster",
-              tiles: [buildWmsTileUrl(wmsUrl, layer)],
-              tileSize: 256,
-            });
-            map.addLayer({ id: "bhuvan-layer", type: "raster", source: "bhuvan", paint: { "raster-opacity": 1 } });
-            // Belt-and-braces on top of the probe above: if the source still isn't
-            // loaded after a few seconds, treat it as unreachable rather than risk a
-            // silently blank layer.
-            setTimeout(() => {
-              if (!bhuvanFailedRef.current && !map.isSourceLoaded?.("bhuvan")) dropBhuvan();
-            }, 6000);
-          } catch (err) {
-            console.warn("[MapView] could not add Bhuvan source:", err);
-            dropBhuvan();
-          }
-        });
-      } else {
-        setBasemapFailed(true);
+    /** The region's fallback chart, if it configured one. Nothing about which server
+     * that is lives in this component — CLAUDE.md invariant 6. */
+    function fallbackConfig(): ChartConfig | null {
+      const fb = basemap?.fallback as Record<string, unknown> | undefined;
+      const wmsUrl = String(fb?.wms_url ?? "");
+      const layer = String(fb?.layer ?? "");
+      if (!wmsUrl || !layer) return null;
+      return { wmsUrl, layer, label: String(fb?.label ?? "fallback chart") };
+    }
+
+    /** Probe one chart, and paint it only if a real tile came back. `isFallback` picks
+     * the layer id so the primary and the fallback can never fight over the same one. */
+    async function loadChart(cfg: ChartConfig | null, isFallback: boolean): Promise<void> {
+      if (!cfg) {
+        setBasemapNote(null); // nothing left to try — plain ocean, said out loud
+        return;
       }
+      const ok = await probeBasemapTile(cfg.wmsUrl, cfg.layer);
+      if (!ok) {
+        if (isFallback) setBasemapNote(null);
+        else void loadChart(fallbackConfig(), true);
+        return;
+      }
+      const sourceId = isFallback ? "chart-fallback" : "bhuvan";
+      const layerId = `${sourceId}-layer`;
+      try {
+        if (map.getLayer(layerId) || map.getSource(sourceId)) return; // already painted
+        map.addSource(sourceId, {
+          type: "raster",
+          tiles: [buildWmsTileUrl(cfg.wmsUrl, cfg.layer)],
+          tileSize: 256,
+        });
+        map.addLayer(
+          { id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 1 } },
+          // Under everything else — the overlays were added first on a fallback path.
+          map.getLayer("geofence-fill") ? "geofence-fill" : undefined,
+        );
+        setBasemapNote(isFallback ? cfg.label : null);
+        // Belt-and-braces on top of the probe: if the source still isn't loaded after a
+        // few seconds, treat it as unreachable rather than risk a silently blank layer.
+        setTimeout(() => {
+          if (map.getSource(sourceId) && !map.isSourceLoaded?.(sourceId)) {
+            if (isFallback) setBasemapNote(null);
+            else dropBhuvan();
+          }
+        }, 6000);
+      } catch (err) {
+        console.warn(`[MapView] could not add ${sourceId} source:`, err);
+        if (isFallback) setBasemapNote(null);
+        else dropBhuvan();
+      }
+    }
+
+    map.on("load", () => {
+      const wmsUrl = String(basemap?.wms_url ?? "");
+      const layer = String(basemap?.layer ?? "");
+      const label = String(basemap?.attribution ?? "chart");
+      void loadChart(wmsUrl && layer ? { wmsUrl, layer, label } : null, false);
       setMapReady(true);
     });
 
+    // MapLibre measures its container once, at construction. BoatApp keeps all three tab
+    // panels mounted and toggles them with `display`, so on a fresh load the Map tab is
+    // `display: none` and this map is built into a 0x0 box — every layer renders into
+    // nothing and the tab stays blank until something forces a re-measure. A
+    // ResizeObserver is the fix that does not care *how* the container was hidden.
+    let observer: ResizeObserver | null = null;
+    if (containerRef.current && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver((entries) => {
+        const box = entries[0]?.contentRect;
+        if (!box || box.width === 0 || box.height === 0) return;
+        map.resize();
+        // The first time the map is given a real size, re-centre: an easeTo that ran
+        // while the canvas was 0x0 computed its viewport against nothing.
+        if (!sizedOnceRef.current) {
+          sizedOnceRef.current = true;
+          const pos = positionRef.current;
+          if (pos.ready) map.easeTo({ center: toLngLat([pos.lat, pos.lon]), duration: 0 });
+        }
+      });
+      observer.observe(containerRef.current);
+    }
+
     return () => {
+      observer?.disconnect();
       map.remove();
       mapRef.current = null;
       markerRef.current = null;
+      sizedOnceRef.current = false;
       geofenceLayersAddedRef.current = false;
       routeLayerAddedRef.current = false;
       pfzOfficialLayerAddedRef.current = false;
@@ -478,7 +566,9 @@ export function MapView({
   const derivedNote = !pfzDerived
     ? "Loading indicative fishing-zone estimate…"
     : `${pfzDerived.disclaimer}${
-        !pfzDerived.chlorophyll_available && pfzDerived.chlorophyll_reason ? ` (${pfzDerived.chlorophyll_reason})` : ""
+        !pfzDerived.chlorophyll_available && pfzDerived.chlorophyll_reason
+          ? ` (${shortReason(pfzDerived.chlorophyll_reason)})`
+          : ""
       }`;
 
   const hazardNote = !hazards
@@ -492,7 +582,11 @@ export function MapView({
       <div className="map-view">
         <div ref={containerRef} className="map-view__canvas" />
         {!region ? <div className="map-view__overlay">Loading chart…</div> : null}
-        {basemapFailed ? <div className="map-view__badge">Chart imagery unavailable — showing plain chart</div> : null}
+        {basemapNote === null ? (
+          <div className="map-view__badge">Chart imagery unavailable — showing plain chart</div>
+        ) : basemapNote ? (
+          <div className="map-view__badge">ISRO Bhuvan chart unavailable — showing {basemapNote}</div>
+        ) : null}
         <div className="map-view__legend">
           <div className="map-view__legend-item">
             <span className="map-view__swatch" style={{ background: PFZ_OFFICIAL_COLOR }} />
@@ -513,9 +607,18 @@ export function MapView({
         </div>
       </div>
       <div className="map-view__notes">
-        <div className="map-view__note">{officialNote}</div>
-        <div className="map-view__note map-view__note--derived">{derivedNote}</div>
-        <div className="map-view__note">{hazardNote}</div>
+        <div className="map-view__note">
+          <span className="map-view__note-dot" aria-hidden="true" />
+          {officialNote}
+        </div>
+        <div className="map-view__note map-view__note--derived">
+          <span className="map-view__note-dot" aria-hidden="true" />
+          {derivedNote}
+        </div>
+        <div className="map-view__note">
+          <span className="map-view__note-dot" aria-hidden="true" />
+          {hazardNote}
+        </div>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@
  *   - online: `postGeofenceCheck` (tool 9) against the live position
  *   - offline: `checkGeofencesOffline` (turf, client-side) against cached polygons
  */
+import "./alerts.css";
 import { alertLevelMeta, formatDistanceNm, formatEtaSeconds } from "./format";
 
 export interface ProximityAlertVM {
@@ -51,10 +52,13 @@ export function AlertBanner({
       {alerts.map((a) => {
         const meta = alertLevelMeta(a.level);
         const eta = formatEtaSeconds(a.etaSeconds);
+        // Subtle pulse for CRITICAL/BREACH only, not WARN — a markup-only distinction,
+        // no change to the level values themselves.
+        const pulse = a.level === "CRITICAL" || a.level === "BREACH";
         return (
           <div
             key={a.key}
-            className="alert-banner alert-banner--active"
+            className={`alert-banner alert-banner--active${pulse ? " alert-banner--pulse" : ""}`}
             style={{ borderColor: meta.fg, background: meta.bg }}
           >
             <span className="alert-banner__badge" style={{ background: meta.fg }}>

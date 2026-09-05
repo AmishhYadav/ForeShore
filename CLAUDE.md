@@ -294,6 +294,13 @@ Keep a second region file (`gujarat_sir_creek.yaml`) working purely to demonstra
   adapter). Same `AgentRuntime` loop, same trace, same tool schemas either way — only the
   request/response shape on the wire differs. No key for the selected provider still
   degrades to `ScriptedClient`, same as always.
+- The answer text goes through a **final editor pass** (`agents/synthesis.py::polish_answer`)
+  after the verdict, the evidence audit and the ceiling. It rewrites for readability only:
+  any candidate that introduces a number, changes the verdict, drops the named handoff or
+  switches language is discarded and the unpolished text ships, with the reason recorded on
+  `payloads.polish`. Deterministic typography cleanup runs even with no model.
+  `FORESHORE_POLISH=off` disables the model half. Polish is never load-bearing — do not
+  move a safety decision into it.
 - Every tool call and result is persisted as a reasoning trace, retrievable and renderable.
   Explainability is a stored artifact, not post-hoc LLM narration.
 - Ingestion jobs are idempotent and record granule acquisition time on write.

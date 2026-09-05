@@ -41,7 +41,7 @@ from uuid import uuid4
 
 from ..config import RegionConfig, load_region
 from ..geofence.classes import format_copy, title_for
-from ..geofence.engine import GeofenceEngine
+from ..geofence.engine import GeofenceEngine, shared_engine
 from ..models import Alert, VesselState, utcnow
 from ..tools.geofence_tools import get_exclusion_zones
 from .alerts import AlertStore
@@ -65,7 +65,11 @@ class PushLoop:
         self.fleet = fleet if fleet is not None else default_fleet(region)
         self._vessels: dict[str, VesselState] = {v.vessel_id: v for v in self.fleet}
         self.alert_store = alert_store or AlertStore()
-        self.engine = engine or GeofenceEngine(region=region)
+        # The process-wide engine, not a private one: the dynamic hazard fences this loop
+        # refreshes each tick are exactly what the request path's `check_geofences` needs
+        # to see. Two instances meant a vessel inside a live cyclone cone got "no fences
+        # nearby" from the boat app while the push loop flagged BREACH for the same point.
+        self.engine = engine or shared_engine(region)
         self.region = region or load_region()
         self.tick_seconds = tick_seconds
 

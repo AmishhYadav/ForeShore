@@ -151,6 +151,13 @@ def _handoff_from_payload(raw: Any) -> Handoff | None:
             authority_name=str(authority_name),
             authority_type=authority_type,  # type: ignore[arg-type]
             contact=raw.get("contact"),
+            contact_label=raw.get("contact_label"),
+            # Absent field defaults to False: an entry we cannot confirm is verified must
+            # never be presented as dialable.
+            contact_verified=bool(raw.get("contact_verified", False)),
+            vhf_channel=raw.get("vhf_channel"),
+            district=raw.get("district"),
+            alternates=tuple(raw.get("alternates") or ()),
             lat=raw.get("lat"),
             lon=raw.get("lon"),
             distance_nm=raw.get("distance_nm"),
@@ -344,11 +351,13 @@ def evaluate_verdict(
             f"advisory ceiling ({rules})."
         )
     if verdict.level == "DO_NOT_ADVISE" and verdict.handoff:
-        lines.append(
-            f"Handoff: {verdict.handoff.authority_name} "
-            f"({verdict.handoff.authority_type}, contact "
-            f"{verdict.handoff.contact or 'n/a'})."
-        )
+        # This summary is fed to the synthesis model as evidence, so an unverified
+        # demo-directory number would reach prose that gets read aloud and dialled. Only a
+        # verified, published number is named here; the rest of the contact card is
+        # rendered from the structured handoff, which marks what it is.
+        h = verdict.handoff
+        contact = f", contact {h.contact}" if (h.contact and h.contact_verified) else ""
+        lines.append(f"Handoff: {h.authority_name} ({h.authority_type}{contact}).")
     summary = " ".join(lines)
 
     return ToolResult(

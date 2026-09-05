@@ -146,8 +146,19 @@ and "cannot check" remain different answers, which was the original point of the
 
 **Finding.** Asking "can I go out tomorrow morning?" against today's bulletin correctly
 yields `DO_NOT_ADVISE`: the IMD Coastal Bulletin's validity is 12 h, and tomorrow morning
-falls outside it. The ceiling evaluates staleness against the **time being asked about**,
-not against wall-clock now.
+falls outside it.
+
+**Amended 2026-09-05.** The original implementation reached that verdict by passing the
+*time being asked about* into the ceiling as its wall clock, which meant a bulletin that
+was still perfectly current reported itself as having "expired 7.0 hours ago". The verdict
+was right and the stated reason was false — and that reason is what the fisherman reads.
+
+`CeilingInput` now carries the two separately: `now` (wall clock — is the bulletin
+FORESHORE holds still current?) and `target_time` (the departure the user named — does the
+bulletin's window even cover it?). They fire different rules, `bulletin_expired` and
+`bulletin_does_not_cover_departure`, with different copy. Both still cap at
+`DO_NOT_ADVISE`; the abstention is unchanged, only the sentence is now true. Covered by
+`backend/tests/test_ceiling.py::test_a_current_bulletin_is_not_reported_as_expired_when_asked_about_later`.
 
 **Consequence for the demo.** The Phase 8 demo script's opening beat asks about tomorrow
 morning and expects an amber verdict. Against a live bulletin that beat will abstain, which

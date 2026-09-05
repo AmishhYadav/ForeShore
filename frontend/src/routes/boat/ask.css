@@ -1,0 +1,580 @@
+/* ============================================================================
+   Boat UI — Ask tab (VerdictCard + VoiceInput)
+   ============================================================================
+   Single stylesheet imported from both components (the bundler dedupes the
+   import). Deliberately reuses the marine dark theme, glass-card treatment,
+   verdict colour tokens, verdict-icon dot/glow/breathe animation and
+   mic-button gradient pill already established in boat.css / index.css —
+   this file restructures markup and copy (plain-English verdict, rewritten
+   downgrade explanation, restructured contact block, manual Speak control,
+   centred icons), not the visual language. Every class name rendered by
+   VerdictCard.tsx and VoiceInput.tsx has its rule here.
+   ============================================================================ */
+
+/* ── Verdict Card ──────────────────────────────────────────────────────────── */
+
+.verdict-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  padding: 24px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition: all var(--duration-normal) var(--ease-out);
+  animation: scaleIn 0.4s var(--ease-spring) both;
+}
+
+.verdict-card--empty {
+  border-color: var(--ink-700);
+  text-align: center;
+  padding: 36px 20px;
+}
+
+.verdict-card--stale {
+  opacity: 0.7;
+}
+
+.verdict-card__stale-banner {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px;
+  margin: -24px -20px 16px;
+  background: rgba(224, 168, 21, 0.15);
+  border-bottom: 1px solid rgba(224, 168, 21, 0.3);
+  color: var(--verdict-caution);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  animation: pulse 2s ease infinite;
+}
+
+.verdict-card__empty-headline {
+  font-family: var(--font-headline);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-50);
+  margin-bottom: 8px;
+}
+
+.verdict-card__empty-message {
+  font-size: 15px;
+  color: var(--marine-on-surface-variant);
+  line-height: 1.6;
+}
+
+/* Small monospace provenance chip — the raw enum, for judges/debugging. The
+   fisherman-facing verdict is the big label below; this is deliberately
+   quiet (top-right, muted, tiny). */
+.verdict-card__header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.verdict-card__chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.verdict-card__top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.verdict-card__level-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The plain-English verdict — largest text on the card. */
+.verdict-card__level {
+  font-family: var(--font-headline);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+}
+
+/* Backend's copy.headline, shown only when it adds information beyond the
+   plain-English label above it. */
+.verdict-card__headline {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--marine-on-surface-variant);
+  line-height: 1.3;
+}
+
+.verdict-card__reason {
+  font-size: 15px;
+  color: var(--marine-on-surface-variant);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+/* Downgrade explanation — a labelled panel, not a floating strip. Same
+   caution tint as before, restructured into a title + body. */
+.verdict-card__downgrade {
+  font-size: 13px;
+  background: rgba(224, 168, 21, 0.1);
+  border: 1px solid rgba(224, 168, 21, 0.2);
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+}
+
+.verdict-card__downgrade-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--verdict-caution);
+  margin-bottom: 6px;
+}
+
+.verdict-card__downgrade-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--marine-on-surface-variant);
+}
+
+.verdict-card__validity {
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+  margin-top: 8px;
+  opacity: 0.7;
+}
+
+.verdict-card__details {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 12px;
+}
+
+.verdict-card__details summary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--marine-aqua-bright);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.verdict-card__details ul {
+  padding: 8px 0 0 20px;
+  margin: 0;
+}
+
+.verdict-card__details li {
+  font-size: 14px;
+  color: var(--marine-on-surface-variant);
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+.verdict-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 12px;
+}
+
+/* Explicit, never-autoplay Speak control. Icon + label share one flex
+   container with line-height:1 so the glyph sits optically centred with
+   the text — the fix for the reported centring bug. */
+.verdict-card__speak {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+  min-height: 44px;
+  padding: 8px 16px;
+  box-sizing: border-box;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--marine-aqua-bright);
+  background: transparent;
+  border: 1px solid var(--marine-aqua);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.verdict-card__speak:hover {
+  background: rgba(27, 163, 163, 0.12);
+}
+
+.verdict-card__speak-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.verdict-card__speak-label {
+  line-height: 1;
+}
+
+/* ── Verdict Icon — status dot, unchanged treatment ───────────────────────── */
+
+.verdict-card__icon {
+  display: inline-block;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.verdict-card__icon--go {
+  background: var(--verdict-go);
+  box-shadow: 0 0 24px rgba(31, 163, 122, 0.4);
+  animation: breathe 3s ease infinite;
+}
+
+.verdict-card__icon--caution {
+  background: var(--verdict-caution);
+  box-shadow: 0 0 24px rgba(224, 168, 21, 0.4);
+  animation: breathe 3s ease infinite;
+}
+
+.verdict-card__icon--stop {
+  background: var(--verdict-stop);
+  box-shadow: 0 0 24px rgba(217, 72, 63, 0.4);
+  animation: breathe 2s ease infinite;
+}
+
+/* ── Handoff Block ─────────────────────────────────────────────────────────── */
+
+.handoff-block {
+  margin-top: 12px;
+  padding: 16px;
+  background: rgba(217, 72, 63, 0.08);
+  border: 1px solid rgba(217, 72, 63, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.handoff-block__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--verdict-stop);
+  margin-bottom: 8px;
+}
+
+.handoff-block__primary {
+  margin-bottom: 4px;
+}
+
+.handoff-block__name {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-50);
+  margin-bottom: 4px;
+}
+
+.handoff-block__meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.handoff-block__district,
+.handoff-block__distance {
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+}
+
+.handoff-block__contact-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.handoff-block__contact-label {
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.8;
+}
+
+.handoff-block__contact {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--marine-aqua-bright);
+  text-decoration: underline;
+}
+
+.handoff-block__contact--compact {
+  font-size: 13px;
+}
+
+/* Demo-directory numbers are shown, never dialled: plain muted text, no
+   tel: link, no underline. */
+.handoff-block__contact--demo {
+  color: var(--marine-on-surface-variant);
+  text-decoration: none;
+  font-style: italic;
+}
+
+.handoff-block__pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(224, 168, 21, 0.15);
+  color: var(--verdict-caution);
+  border: 1px solid rgba(224, 168, 21, 0.3);
+}
+
+.handoff-block__vhf {
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+  margin-top: 2px;
+}
+
+.handoff-block__alternates {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.handoff-block__alternates-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
+.handoff-block__alternate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.handoff-block__alternate:last-child {
+  margin-bottom: 0;
+}
+
+.handoff-block__alternate-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-50);
+}
+
+.handoff-block__alternate-distance {
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+}
+
+/* Coast Guard — always present, always last, the most prominent actionable
+   item after the primary contact. Same aqua link language as above, just
+   turned up. */
+.handoff-block__cg {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.handoff-block__cg-link {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--marine-aqua-bright);
+  text-decoration: underline;
+}
+
+/* ── Voice Input ───────────────────────────────────────────────────────────── */
+
+.voice-input {
+  animation: fadeInUp 0.5s var(--ease-out) 0.2s both;
+}
+
+.voice-input__disabled-note {
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.voice-input__row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.voice-input__mic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+  min-height: 44px;
+  padding: 14px 28px;
+  box-sizing: border-box;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--marine-aqua), var(--marine-teal));
+  color: white;
+  cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-out);
+  position: relative;
+}
+
+.voice-input__mic::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--marine-aqua);
+  opacity: 0;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.voice-input__mic:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(27, 163, 163, 0.3);
+}
+
+.voice-input__mic--listening {
+  background: linear-gradient(135deg, var(--verdict-stop), #b83b33);
+  animation: pulse 1s ease infinite;
+}
+
+.voice-input__mic--listening::after {
+  opacity: 1;
+  border-color: var(--verdict-stop);
+  animation: ripple 1.5s ease infinite;
+}
+
+.voice-input__mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Replaces the old empty <span> (font-size set, no content — the reason the
+   label looked off-centre). Real inline SVG, sized and blocked so it never
+   inherits stray line-box height from the font. */
+.voice-input__mic-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.voice-input__mic-label {
+  line-height: 1;
+}
+
+.voice-input__mic-unavailable {
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+  text-align: center;
+  padding: 8px;
+}
+
+.voice-input__error {
+  font-size: 13px;
+  color: var(--verdict-stop);
+  text-align: center;
+  padding: 8px;
+  margin-top: 8px;
+}
+
+.voice-input__text-row {
+  display: flex;
+  gap: 8px;
+}
+
+.voice-input__text {
+  flex: 1;
+  height: 48px;
+  padding: 0 16px;
+  font-size: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--ink-50);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.voice-input__text::placeholder {
+  color: var(--marine-on-surface-variant);
+  opacity: 0.6;
+}
+
+.voice-input__text:focus {
+  border-color: var(--marine-aqua);
+  box-shadow: 0 0 0 3px rgba(27, 163, 163, 0.15);
+}
+
+/* Same height as the text input, content centred — the second reported
+   centring bug. */
+.voice-input__send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  height: 48px;
+  padding: 0 20px;
+  box-sizing: border-box;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--marine-aqua);
+  color: var(--marine-navy);
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.voice-input__send:hover:not(:disabled) {
+  background: var(--marine-aqua-bright);
+  transform: translateY(-1px);
+}
+
+.voice-input__send:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .verdict-card,
+  .voice-input,
+  .verdict-card__stale-banner,
+  .verdict-card__icon--go,
+  .verdict-card__icon--caution,
+  .verdict-card__icon--stop,
+  .voice-input__mic--listening,
+  .voice-input__mic--listening::after {
+    animation: none !important;
+  }
+}

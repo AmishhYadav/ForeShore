@@ -124,7 +124,10 @@ class VerdictContext:
     observations: list[Observation]
     vessel_class_id: str | None = None
     district: str | None = None
+    #: The departure time the question was about, when it named one. Not the clock.
     when: datetime | None = None
+    #: Wall clock override. Defaults to `utcnow()` inside the ceiling; pinned by tests.
+    now: datetime | None = None
     #: Bulletin fields, passed through from sources.imd_bulletin.
     sea_condition: str | None = None
     port_signal: str | None = None
@@ -300,7 +303,12 @@ def evaluate(
                         (period.numeric if period else None)),
         district=district,
         vessel_class_id=vessel.class_id,
-        now=ctx.when,
+        # `now` is the wall clock — whether the bulletin FORESHORE holds is current.
+        # `target_time` is what the user asked about. Passing `ctx.when` as `now` (which
+        # this did) made a question about tomorrow report that a still-valid bulletin had
+        # already expired.
+        now=ctx.now,
+        target_time=ctx.when,
     )
     ceiling = compute_ceiling(ci, region=region, vessel=vessel)
     apply_ceiling(

@@ -1,6 +1,15 @@
 /**
- * `/boat` — the fisherman-facing surface. Tamil-first, voice-first, verdict-first: the
- * verdict card is the emotional/functional centre of the whole pitch (PLAN.md Phase 5).
+ * `/boat` — the fisherman-facing surface. Voice-capable, verdict-first: the verdict card
+ * is the emotional/functional centre of the whole pitch (PLAN.md Phase 5).
+ *
+ * English-first for now. The agent core still detects and mirrors the query language
+ * (a Tamil question is answered in Tamil), but the UI chrome, alert copy and legends are
+ * English until the full Tamil surface is finished — that switch lives in the region
+ * config's `primary_language`, not here.
+ *
+ * Speech playback is a deliberate user action, never automatic: an answer that starts
+ * talking by itself is useless on a boat with an engine running and irritating anywhere
+ * else. The Speak control on the verdict card is the only thing that starts TTS.
  *
  * Now organised into three tabs via a bottom navigation bar:
  *   - Ask: verdict card + voice/text input + transcript
@@ -77,6 +86,7 @@ export default function BoatApp() {
   const [cachedDecision, setCachedDecision] = useState<CachedDecision | undefined>(undefined);
 
   const [activeTab, setActiveTab] = useState<BoatTab>("ask");
+  const [speaking, setSpeaking] = useState(false);
 
   // -- bootstrap: region config -----------------------------------------------------------
   useEffect(() => {
@@ -149,8 +159,29 @@ export default function BoatApp() {
     offline,
     position,
     geofenceGeoJson: geofenceFC,
-    language: outcome?.language ?? region?.primary_language ?? "en",
+    // Mirror the answer's language when there is one; English otherwise. Deliberately
+    // not region.primary_language — the region is English-first for now.
+    language: outcome?.language ?? "en",
   });
+
+  // Manual playback only. Toggling while speaking stops it — on a boat the ability to
+  // shut it up matters as much as the ability to start it.
+  function handleSpeak(text: string, language: string) {
+    if (!activeVoiceAdapter.available) return;
+    if (speaking) {
+      activeVoiceAdapter.cancel();
+      setSpeaking(false);
+      return;
+    }
+    setSpeaking(true);
+    activeVoiceAdapter
+      .speak(text, language === "ta" ? "ta-IN" : "en-IN")
+      .catch((err) => console.warn("[BoatApp] speech synthesis failed:", err))
+      .finally(() => setSpeaking(false));
+  }
+
+  // Never leave a page mid-sentence.
+  useEffect(() => () => activeVoiceAdapter.cancel(), []);
 
   function handleOfflineToggle(next: boolean) {
     setManualOffline(next);
@@ -181,11 +212,7 @@ export default function BoatApp() {
       setOutcome(result);
       cacheDecision(result).catch(() => {});
       if (result.route) cacheRoute(result.route).catch(() => {});
-      if (activeVoiceAdapter.available) {
-        activeVoiceAdapter
-          .speak(result.text, result.language === "ta" ? "ta-IN" : "en-IN")
-          .catch((err) => console.warn("[BoatApp] speech synthesis failed:", err));
-      }
+      // No automatic playback. The answer is spoken only when the user presses Speak.
     } catch (err) {
       console.warn("[BoatApp] query failed:", err);
       setQueryError(
@@ -202,7 +229,7 @@ export default function BoatApp() {
   const cachedStillValid = Boolean(cachedDecision && isDecisionStillValid(cachedDecision));
   const activeOutcome: QueryOutcome | null = offline ? (cachedStillValid ? cachedDecision!.outcome : null) : outcome;
   const activeLabels = activeOutcome?.payloads?.labels ?? DEFAULT_LABELS;
-  const activeLanguage = activeOutcome?.language ?? region?.primary_language ?? "en";
+  const activeLanguage = activeOutcome?.language ?? "en";
   const rawVerdictCopy = activeOutcome?.payloads?.verdict_copy as Record<string, unknown> | null | undefined;
   const activeCopy = rawVerdictCopy
     ? { headline: String(rawVerdictCopy.headline ?? ""), reason: String(rawVerdictCopy.reason ?? rawVerdictCopy.lead ?? "") }
@@ -254,6 +281,12 @@ export default function BoatApp() {
               staleNotice={staleNotice}
               emptyHeadline={emptyHeadline}
               emptyMessage={emptyMessage}
+              onSpeak={
+                activeOutcome && activeVoiceAdapter.available
+                  ? () => handleSpeak(activeOutcome.text, activeLanguage)
+                  : undefined
+              }
+              speaking={speaking}
             />
           )}
 
@@ -274,8 +307,14 @@ export default function BoatApp() {
             {queryError ? <div className="ask-section__error">{queryError}</div> : null}
             {!offline && lastQuestion && activeOutcome ? (
               <div className="ask-section__transcript">
-                <div className="ask-section__question">"{lastQuestion}"</div>
-                <div className="ask-section__answer">{activeOutcome.text}</div>
+                <div className="ask-section__turn">
+                  <div className="ask-section__turn-label">You asked</div>
+                  <div className="ask-section__question">{lastQuestion}</div>
+                </div>
+                <div className="ask-section__turn">
+                  <div className="ask-section__turn-label">FORESHORE</div>
+                  <div className="ask-section__answer">{activeOutcome.text}</div>
+                </div>
               </div>
             ) : null}
           </section>

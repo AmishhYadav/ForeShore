@@ -219,7 +219,14 @@ def get_hazard_alerts(
         )
 
     partial = bool(missing)
-    no_active = len(events) == 0
+    # Geometry counts, not just event centroids. `events` are filtered by whether the
+    # storm's *centre* falls in the requested bbox, while cones and track lines are
+    # filtered by whether the *feature* overlaps it — which is the whole point of the
+    # REGION_BUFFER_DEG padding. Deriving "no active hazard" from the event count alone
+    # meant a cyclone whose centre sat outside a narrow bbox but whose forecast cone
+    # reached into it was reported as no hazard at all, and its geometry was then thrown
+    # away on the way out. The boat map asks with exactly such a narrow bbox.
+    no_active = not (events or polygons or cyclone_track_features)
 
     if no_active:
         checked = []
@@ -241,10 +248,23 @@ def get_hazard_alerts(
         }
     else:
         labels = sorted({_event_label(e) for e in events})
-        summary = (
-            f"{len(events)} tropical-cyclone hazard record(s) near "
-            f"{region.display_name_en}: {', '.join(labels)}."
-        )
+        if events:
+            summary = (
+                f"{len(events)} tropical-cyclone hazard record(s) near "
+                f"{region.display_name_en}: {', '.join(labels)}."
+            )
+        else:
+            # Geometry reaches this area even though no storm centre does — the honest
+            # reading is "the cone is over you, the eye is not".
+            pieces = []
+            if polygons:
+                pieces.append(f"{len(polygons)} exclusion polygon(s)")
+            if cyclone_track_features:
+                pieces.append(f"{len(cyclone_track_features)} track line(s)")
+            summary = (
+                f"No cyclone centre is inside this area, but {' and '.join(pieces)} "
+                f"reach into it. Treat the area as affected."
+            )
         if partial:
             summary += f" One source failed to respond ({'; '.join(errors)}); showing the other."
         payload = {

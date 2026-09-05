@@ -10,17 +10,63 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..config import load_region
+from ..config import ContactEntry, load_contact_directory, load_region
 from ..models import Handoff, Observation, Provenance, ToolResult, utcnow
 from .registry import latlon_schema, registry
 
 
 def _coast_guard_payload(region: Any) -> dict[str, Any]:
-    cg = region.coast_guard or {}
+    """The Coast Guard line, from the contact directory, region config as fallback.
+
+    1554 is a real published national number, so it is the one handoff entry that is
+    marked verified and may be offered to the UI as a dialable link.
+    """
+    directory = load_contact_directory()
+    cg_region = region.coast_guard or {}
+    entry = directory.coast_guard
+    payload = entry.as_dict()
+    # Region config still wins on naming/number if it carries them — a region swap must
+    # be able to change the emergency number without editing the shared directory.
+    if cg_region.get("name"):
+        payload["authority_name"] = cg_region["name"]
+    if cg_region.get("contact"):
+        payload["contact"] = str(cg_region["contact"])
+    payload["authority_type"] = "coast_guard"
+    return payload
+
+
+def _contact_fields(name: str | None, district: str | None) -> dict[str, Any]:
+    """Directory lookup for one landing centre. Missing entry is not an error — the
+    handoff is still named and the Coast Guard line is still shown alongside it."""
+    entry: ContactEntry | None
+    entry, kind = load_contact_directory().for_centre(name, district)
+    if entry is None:
+        return {
+            "contact": None,
+            "contact_label": None,
+            "vhf_channel": None,
+            "contact_verified": False,
+            "authority_name": name,
+        }
+    if kind == "centre":
+        # The centre has its own desk — its entry names the place AND who answers.
+        label = entry.contact_label
+        authority_name = entry.authority_name
+    else:
+        # District fallback: keep the coastal place name, attribute the number to the
+        # office that actually answers it.
+        label = (
+            f"{entry.authority_name} — {entry.contact_label}"
+            if entry.contact_label
+            else entry.authority_name
+        )
+        authority_name = name
     return {
-        "authority_type": "coast_guard",
-        "authority_name": cg.get("name", "Indian Coast Guard"),
-        "contact": cg.get("contact"),
+        "contact": entry.contact,
+        "contact_label": label,
+        "vhf_channel": entry.vhf_channel,
+        "contact_verified": entry.verified,
+        "authority_name": authority_name,
     }
 
 
@@ -141,14 +187,38 @@ def nearest_harbour(lat: float, lon: float, n: int = 3) -> ToolResult:
     ]
 
     nearest = centres[0]
+    fields = _contact_fields(nearest.name, nearest.district)
+    authority_name = fields["authority_name"] or nearest.name
+
+    alternates: list[dict[str, Any]] = []
+    for c in centres[1:3]:
+        alt = _contact_fields(c.name, c.district)
+        alternates.append(
+            {
+                "authority_name": alt["authority_name"] or c.name,
+                "authority_type": "landing_centre",
+                "district": c.district,
+                "contact": alt["contact"],
+                "contact_label": alt["contact_label"],
+                "contact_verified": alt["contact_verified"],
+                "vhf_channel": alt["vhf_channel"],
+                "distance_nm": c.distance_nm,
+            }
+        )
+
     handoff = Handoff(
         reason="Nearest named landing centre for harbour return / DO_NOT_ADVISE handoff.",
-        authority_name=nearest.name,
+        authority_name=authority_name,
         authority_type="landing_centre",
-        contact=None,
+        contact=fields["contact"],
+        contact_label=fields["contact_label"],
+        contact_verified=fields["contact_verified"],
+        vhf_channel=fields["vhf_channel"],
+        district=nearest.district,
         lat=nearest.lat,
         lon=nearest.lon,
         distance_nm=nearest.distance_nm,
+        alternates=tuple(alternates),
         provenance=prov,
     )
 

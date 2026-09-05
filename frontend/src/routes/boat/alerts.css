@@ -1,0 +1,130 @@
+/* ============================================================================
+   Proximity/hazard alert banner — AlertBanner.tsx
+   ============================================================================
+   Base treatment is deliberately the same glass-card idiom VerdictCard.tsx /
+   verdict-card already uses for the exact same mechanic (a card whose accent
+   comes from an inline `style={{ background, borderColor }}` driven by a
+   level→colour lookup, see format.ts's `alertLevelMeta` / `verdictMeta`):
+   glass-bg + backdrop-blur base, with the inline colours substituted in for
+   the active/coloured state and sane neutral defaults otherwise. No new
+   colours, fonts, or card treatment introduced here.
+   ============================================================================ */
+
+.alert-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  animation: fadeIn var(--duration-normal) var(--ease-out) both;
+  /* No overflow:hidden here — that was the bug: it clipped the badge/source
+     text against this rule's own rounded corner. Nothing in this file clips
+     text, and nothing here uses !important, so the inline borderColor/
+     background AlertBanner.tsx sets on `--active` alerts always wins. */
+}
+
+/* Quiet single-line rows (no inline colour override) — vertically centered
+   since they're a single line rather than a headline + meta + detail stack. */
+.alert-banner--muted,
+.alert-banner--clear {
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-banner--clear {
+  color: var(--marine-on-surface);
+}
+
+.alert-banner--muted > span:not(.alert-banner__dot),
+.alert-banner--clear > span:not(.alert-banner__dot):not(.alert-banner__source) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alert-banner__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--marine-outline);
+}
+
+.alert-banner--clear .alert-banner__dot {
+  background: var(--verdict-go);
+}
+
+/* CRITICAL/BREACH alerts get the same subtle pulse verdict-card__stale-banner
+   already uses for a caution/severity state; WARN does not. */
+.alert-banner--pulse {
+  animation: fadeIn var(--duration-normal) var(--ease-out) both, pulse 2s ease infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert-banner,
+  .alert-banner--pulse {
+    animation: none;
+  }
+}
+
+.alert-banner__badge {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--marine-navy); /* dark text on the inline-set bright background,
+                                 same pairing voice-input__send already uses */
+}
+
+.alert-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-banner__headline {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-50);
+  line-height: 1.3;
+}
+
+.alert-banner__meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-banner__detail {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--marine-on-surface);
+  overflow-wrap: anywhere;
+}
+
+.alert-banner__source {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  white-space: nowrap;
+}

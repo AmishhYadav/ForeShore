@@ -8,7 +8,7 @@
  * for the recommended/active outcome). Display-only: no state, no API calls.
  */
 import type { ScenarioComparison, ScenarioOption } from "@shared/types";
-import { verdictMeta } from "./format";
+import { plainVerdict, verdictMeta } from "./format";
 
 function ScenarioOptionCard({
   option,
@@ -31,11 +31,16 @@ function ScenarioOptionCard({
       {recommended ? (
         <div className="scenario-compare__badge">{labels.recommended ?? "Recommended"}</div>
       ) : null}
-      <div className="scenario-compare__heading">{option.label}</div>
+      <div className="scenario-compare__option-label">{option.label}</div>
       {verdict ? (
-        <div className="scenario-compare__level" style={{ color: meta.fg }}>
-          {verdict.level.replace(/_/g, " ")}
-        </div>
+        <>
+          {/* Plain English first, storage code as a small chip — same rule as the
+              verdict card, so the two surfaces never disagree on wording. */}
+          <div className="scenario-compare__level" style={{ color: meta.fg }}>
+            {plainVerdict(verdict.level)}
+          </div>
+          <div className="scenario-compare__chip">{verdict.level}</div>
+        </>
       ) : null}
       {copy?.headline ? <div className="scenario-compare__option-headline">{copy.headline}</div> : null}
       {copy?.lead ? <div className="scenario-compare__lead">{copy.lead}</div> : null}
@@ -52,6 +57,7 @@ export function ScenarioCompare({
 }) {
   return (
     <div className="scenario-compare">
+      <h2 className="scenario-compare__heading">{labels.compare ?? "Comparing your two options"}</h2>
       <div className="scenario-compare__grid">
         {scenario.options.map((option, i) => (
           <ScenarioOptionCard

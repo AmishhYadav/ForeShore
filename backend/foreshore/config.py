@@ -281,6 +281,104 @@ def load_routing_config() -> RoutingConfig:
     )
 
 
+@dataclass(frozen=True)
+class ContactEntry:
+    """One directory entry behind a ``Handoff``.
+
+    ``verified`` is the load-bearing field: only a real, published number is ``True``,
+    and only a ``True`` entry may be surfaced as a dialable link. Everything else is a
+    demo placeholder and is shown as plain text (see ``config/handoff_contacts.yaml``).
+    """
+
+    authority_name: str
+    authority_type: str
+    contact: str | None
+    contact_label: str | None
+    vhf_channel: str | None
+    verified: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "authority_name": self.authority_name,
+            "authority_type": self.authority_type,
+            "contact": self.contact,
+            "contact_label": self.contact_label,
+            "vhf_channel": self.vhf_channel,
+            "contact_verified": self.verified,
+        }
+
+
+@dataclass(frozen=True)
+class ContactDirectory:
+    """``config/handoff_contacts.yaml``, parsed.
+
+    Lookup order for a landing centre: its own ``centres`` entry, then its district's
+    ``districts`` entry, then nothing (the Coast Guard line is always shown separately
+    and never depends on this lookup succeeding).
+    """
+
+    note: str
+    coast_guard: ContactEntry
+    centres: dict[str, ContactEntry]
+    districts: dict[str, ContactEntry]
+
+    def for_centre(
+        self, name: str | None, district: str | None
+    ) -> tuple[ContactEntry | None, str]:
+        """Return ``(entry, kind)`` where kind is ``"centre"``, ``"district"`` or ``""``.
+
+        The caller needs the kind, not just the entry: a ``centre`` hit names the desk at
+        that landing centre and may sharpen the display name, whereas a ``district`` hit
+        is a fallback office elsewhere and must NOT overwrite the centre's own name — the
+        fisherman is being told where to go, and a district office is not a place on that
+        stretch of coast.
+        """
+        if name:
+            hit = self.centres.get(name.strip().casefold())
+            if hit:
+                return hit, "centre"
+        if district:
+            hit = self.districts.get(district.strip().casefold())
+            if hit:
+                return hit, "district"
+        return None, ""
+
+
+def _contact_entry(d: dict[str, Any], *, default_type: str, default_name: str) -> ContactEntry:
+    return ContactEntry(
+        authority_name=str(d.get("authority_name") or default_name),
+        authority_type=str(d.get("authority_type") or default_type),
+        contact=(str(d["contact"]) if d.get("contact") else None),
+        contact_label=(str(d["contact_label"]) if d.get("contact_label") else None),
+        vhf_channel=(str(d["vhf_channel"]) if d.get("vhf_channel") else None),
+        verified=bool(d.get("verified", False)),
+    )
+
+
+@lru_cache(maxsize=1)
+def load_contact_directory() -> ContactDirectory:
+    d = _read_yaml(CONFIG_DIR / "handoff_contacts.yaml")
+    cg = d.get("coast_guard") or {}
+    return ContactDirectory(
+        note=str((d.get("meta") or {}).get("note", "")),
+        coast_guard=_contact_entry(
+            cg, default_type="coast_guard", default_name="Indian Coast Guard"
+        ),
+        centres={
+            str(k).strip().casefold(): _contact_entry(
+                v or {}, default_type="landing_centre", default_name=str(k)
+            )
+            for k, v in (d.get("centres") or {}).items()
+        },
+        districts={
+            str(k).strip().casefold(): _contact_entry(
+                v or {}, default_type="fisheries_office", default_name=f"{k} District Fisheries Office"
+            )
+            for k, v in (d.get("districts") or {}).items()
+        },
+    )
+
+
 def load(region_id: str | None = None) -> RegionConfig:
     """Plan's acceptance handle: ``load('palk_bay_gom')``."""
     return load_region(region_id)
@@ -292,6 +390,7 @@ def reset_caches() -> None:
     load_vessels.cache_clear()
     load_geofence_config.cache_clear()
     load_routing_config.cache_clear()
+    load_contact_directory.cache_clear()
 
 
 ACTIVE_REGION_ENV = "FORESHORE_REGION"
@@ -313,6 +412,7 @@ __all__ = [
     "Mode", "mode", "is_fixture", "env", "REPO_ROOT", "CONFIG_DIR", "DATA_DIR", "STATIC_DIR",
     "CACHE_DIR", "FIXTURE_DIR", "ARTIFACT_DIR", "Port", "RegionConfig", "VesselClass",
     "VesselCatalogue", "GeofenceCopy", "GeofenceConfig", "RoutingConfig",
+    "ContactEntry", "ContactDirectory", "load_contact_directory",
     "load", "load_region", "load_vessels", "load_geofence_config", "load_routing_config",
     "reset_caches", "set_active_region",
 ]

@@ -1,0 +1,194 @@
+# Handoff contact directory.
+#
+# DO_NOT_ADVISE must hand off to a *named, contactable* human (CLAUDE.md invariant 2).
+# The INCOIS PFZ_LandingCentres layer gives 541+ named centres with district and
+# position, but carries no telephone numbers at all — which is why the UI used to say
+# "contact not on file". This file supplies the missing contact layer.
+#
+# ── Verification, and why it matters ────────────────────────────────────────────────
+# Every entry carries `verified`. Only `verified: true` entries are real, published,
+# checkable numbers; the UI renders those as dialable `tel:` links. Everything with
+# `verified: false` is a DEMO placeholder invented for the SIH demo so that different
+# landing centres show different names, roles and numbers — it is rendered as plain
+# text with a "DEMO DIRECTORY" pill and is never dialable. The subscriber blocks used
+# below (`000 xxx`) are not allocated in the Indian numbering plan, so no such entry can
+# reach a real person even if someone dials it by hand.
+#
+# Replacing this with a real fisheries directory is a config edit, not a code change.
+# Region specifics live here, never in application logic (CLAUDE.md invariant 6).
+
+meta:
+  directory_name: FORESHORE demo handoff directory
+  note: >-
+    Landing-centre telephone numbers are demonstration placeholders. Only the Indian
+    Coast Guard number 1554 is a real, published emergency number.
+
+# Real, published, national. The one number that is always offered as a live link.
+coast_guard:
+  authority_name: Indian Coast Guard — Maritime Rescue
+  authority_type: coast_guard
+  contact: "1554"
+  contact_label: Maritime distress
+  vhf_channel: Ch 16
+  verified: true
+
+# Per-district fallback: used when a landing centre has no entry of its own. District
+# names match INCOIS `DIST_NAME` spellings exactly (Thoothukkudi, Nagappattinam, ...) —
+# those are the strings the WFS layer actually returns.
+districts:
+  Ramanathapuram:
+    authority_name: Ramanathapuram District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4567 000 118"
+    vhf_channel: Ch 16
+    verified: false
+  Pudukkottai:
+    authority_name: Pudukkottai District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4322 000 214"
+    vhf_channel: Ch 16
+    verified: false
+  Thanjavur:
+    authority_name: Thanjavur District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4362 000 331"
+    vhf_channel: Ch 16
+    verified: false
+  Thiruvarur:
+    authority_name: Thiruvarur District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4366 000 407"
+    vhf_channel: Ch 16
+    verified: false
+  Nagappattinam:
+    authority_name: Nagapattinam District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4365 000 522"
+    vhf_channel: Ch 16
+    verified: false
+  Thoothukkudi:
+    authority_name: Thoothukudi District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 461 000 6640"
+    vhf_channel: Ch 16
+    verified: false
+  Tirunelveli:
+    authority_name: Tirunelveli District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 462 000 7715"
+    vhf_channel: Ch 16
+    verified: false
+  Virudunagar:
+    authority_name: Virudhunagar District Fisheries Office
+    authority_type: fisheries_office
+    contact_label: Fisheries control room
+    contact: "+91 4562 000 803"
+    vhf_channel: Ch 16
+    verified: false
+
+# Named centres with their own desk. Keys are matched case-insensitively against the
+# INCOIS `LC_NAME` value.
+centres:
+  Rameshwaram Harbour:
+    authority_name: Rameswaram Fishing Harbour — Harbour Master
+    contact_label: Harbour control
+    contact: "+91 4573 000 154"
+    vhf_channel: Ch 16
+    verified: false
+  Pamban:
+    authority_name: Pamban Landing Centre — Fishermen's Society
+    contact_label: Society office
+    contact: "+91 4573 000 260"
+    vhf_channel: Ch 12
+    verified: false
+  Mandapam (South):
+    authority_name: Mandapam South Landing Centre — Marine Enforcement Post
+    contact_label: Marine enforcement post
+    contact: "+91 4573 000 341"
+    vhf_channel: Ch 16
+    verified: false
+  Mandpam (North):
+    authority_name: Mandapam North Landing Centre — Fisheries Inspector
+    contact_label: Fisheries inspector
+    contact: "+91 4573 000 355"
+    vhf_channel: Ch 12
+    verified: false
+  Dhanushkodi:
+    authority_name: Dhanushkodi Landing Point — Coastal Security Post
+    contact_label: Coastal security post
+    contact: "+91 4573 000 470"
+    vhf_channel: Ch 16
+    verified: false
+  Kilakarai:
+    authority_name: Kilakarai Fishing Harbour — Harbour Office
+    contact_label: Harbour office
+    contact: "+91 4567 000 512"
+    vhf_channel: Ch 14
+    verified: false
+  Devipattinam:
+    authority_name: Devipattinam Landing Centre — Fishermen's Society
+    contact_label: Society office
+    contact: "+91 4567 000 628"
+    vhf_channel: Ch 12
+    verified: false
+  Thondi:
+    authority_name: Thondi Landing Centre — Fisheries Sub-office
+    contact_label: Fisheries sub-office
+    contact: "+91 4561 000 733"
+    vhf_channel: Ch 12
+    verified: false
+  Kottaippattanam:
+    authority_name: Kottaipattinam Landing Centre — Fishermen's Society
+    contact_label: Society office
+    contact: "+91 4322 000 849"
+    vhf_channel: Ch 12
+    verified: false
+  Mallipattinam:
+    authority_name: Mallipattinam Landing Centre — Fisheries Sub-office
+    contact_label: Fisheries sub-office
+    contact: "+91 4362 000 907"
+    vhf_channel: Ch 12
+    verified: false
+  Akkaraipettai:
+    authority_name: Akkaraipettai (Nagapattinam) Fishing Harbour — Harbour Office
+    contact_label: Harbour office
+    contact: "+91 4365 000 118"
+    vhf_channel: Ch 14
+    verified: false
+  Kodiyakarai:
+    authority_name: Kodiyakarai Landing Centre — Forest & Fisheries Post
+    contact_label: Joint post
+    contact: "+91 4365 000 226"
+    vhf_channel: Ch 12
+    verified: false
+  Muthupet:
+    authority_name: Muthupet Landing Centre — Fishermen's Society
+    contact_label: Society office
+    contact: "+91 4366 000 334"
+    vhf_channel: Ch 12
+    verified: false
+  Kulasekharapattinam:
+    authority_name: Kulasekarapattinam Landing Centre — Fisheries Inspector
+    contact_label: Fisheries inspector
+    contact: "+91 461 000 4412"
+    vhf_channel: Ch 12
+    verified: false
+  Manappad Pt:
+    authority_name: Manappad Point Landing Centre — Fishermen's Society
+    contact_label: Society office
+    contact: "+91 461 000 5528"
+    vhf_channel: Ch 12
+    verified: false
+  Alanthalai:
+    authority_name: Alanthalai Landing Centre — Fisheries Sub-office
+    contact_label: Fisheries sub-office
+    contact: "+91 461 000 6631"
+    vhf_channel: Ch 12
+    verified: false

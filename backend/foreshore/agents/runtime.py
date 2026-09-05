@@ -320,6 +320,12 @@ def make_client(api_key: str | None = None, model: str | None = None) -> LLMClie
 
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,4}(?:[.,]\d{1,3})?)(?![\w])")
 
+#: Public alias. The synthesis layer's polish pass compares the numeric tokens of a
+#: rewrite against the tokens of the text it was given, and it must tokenise numbers
+#: exactly the way this module's evidence audit does — two regexes that drift apart would
+#: mean a number this guard considers "already present" and the audit does not.
+NUMBER_TOKEN_RE = _NUMBER
+
 #: Numbers that are never data: times, dates, phone numbers, list ordinals, years.
 _ALLOWED_LITERALS = {
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "12", "24", "100",
@@ -618,6 +624,7 @@ def _evidence_block(results: Sequence[ToolResult]) -> str:
 
 __all__ = [
     "AgentRuntime", "RunResult", "LLMClient", "LLMTurn", "AnthropicClient", "NvidiaNimClient",
-    "ScriptedClient", "make_client", "check_unsourced_numbers", "DEFAULT_MODEL",
+    "ScriptedClient", "make_client", "check_unsourced_numbers", "NUMBER_TOKEN_RE",
+    "DEFAULT_MODEL",
     "DEFAULT_NVIDIA_MODEL", "MAX_TURNS",
 ]

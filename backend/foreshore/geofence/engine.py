@@ -496,4 +496,37 @@ def _nearest_to_geometry(fence: DynamicFence, lat: float, lon: float) -> Nearest
     )
 
 
-__all__ = ["GeofenceEngine", "DynamicFence"]
+# --------------------------------------------------------------------------------------
+# One engine per process
+# --------------------------------------------------------------------------------------
+#
+# Dynamic hazard fences (cyclone cones, wind-radii polygons, high-wave cells) live in
+# memory on the engine instance that was told about them. The push loop is the only thing
+# that refreshes them — so while `tools/geofence_tools.py` held its own separate instance,
+# the request path could not see a single hazard exclusion zone. A vessel sitting inside
+# an active cyclone cone got `proximities: []` from `POST /api/geofence/check` and from
+# the LLM's own tool call, while the push loop, in the same process, correctly flagged
+# BREACH for the tracked fleet at that same position.
+#
+# Both paths now share this one instance. The check on `region_id` rebuilds it after a
+# live region swap, so stale fences from the previous region cannot survive the switch.
+
+_shared: GeofenceEngine | None = None
+
+
+def shared_engine(region: RegionConfig | None = None) -> GeofenceEngine:
+    """The process-wide engine. Static layers and dynamic hazard fences, one copy."""
+    global _shared
+    region = region or load_region()
+    if _shared is None or _shared.region.region_id != region.region_id:
+        _shared = GeofenceEngine(region=region)
+    return _shared
+
+
+def reset_shared_engine() -> None:
+    """Drop the shared instance. Tests, and anything that swaps region out of band."""
+    global _shared
+    _shared = None
+
+
+__all__ = ["GeofenceEngine", "DynamicFence", "shared_engine", "reset_shared_engine"]

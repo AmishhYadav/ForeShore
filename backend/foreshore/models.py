@@ -205,6 +205,21 @@ class Handoff:
     lon: float | None = None
     distance_nm: float | None = None
     provenance: Provenance | None = None
+    #: What the number reaches ("Harbour control", "Fisheries control room"). Display
+    #: only — never used to decide anything.
+    contact_label: str | None = None
+    #: False for entries that come from the demo directory in
+    #: ``config/handoff_contacts.yaml`` rather than from a published official list. The
+    #: UI must render an unverified number as plain text, never as a dialable link: a
+    #: fabricated number that gets dialled in an emergency is the worst possible failure
+    #: of the abstention path. Only numbers marked ``verified: true`` in that config
+    #: (currently: Coast Guard 1554) may be offered as ``tel:`` links.
+    contact_verified: bool = False
+    vhf_channel: str | None = None
+    district: str | None = None
+    #: Up to two further named centres nearby, same shape, so the fisherman has a choice
+    #: rather than a single point of failure.
+    alternates: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -212,9 +227,14 @@ class Handoff:
             "authority_name": self.authority_name,
             "authority_type": self.authority_type,
             "contact": self.contact,
+            "contact_label": self.contact_label,
+            "contact_verified": self.contact_verified,
+            "vhf_channel": self.vhf_channel,
+            "district": self.district,
             "lat": self.lat,
             "lon": self.lon,
             "distance_nm": self.distance_nm,
+            "alternates": [dict(a) for a in self.alternates],
             "provenance": self.provenance.to_dict() if self.provenance else None,
         }
 

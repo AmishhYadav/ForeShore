@@ -87,6 +87,83 @@ def test_ceiling_never_produces_a_more_permissive_level_than_it_started_with():
 
 
 # --------------------------------------------------------------------------------------
+# 1b. Bulletin currency vs. coverage of the requested departure time. Two different
+#     failures; the ceiling must not report one as the other.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_current_bulletin_is_not_reported_as_expired_when_asked_about_later(
+    make_provenance, fixed_now, region
+):
+    """The bug this splits apart: a question about tomorrow used to be evaluated with the
+    departure time standing in for the clock, so a bulletin that was still valid reported
+    itself as having "expired N h ago"."""
+    ci = _ci(
+        make_provenance, fixed_now, region,
+        now=fixed_now,
+        target_time=fixed_now + timedelta(hours=18),  # outside the 12 h window
+    )
+    result = compute_ceiling(ci)
+
+    assert "bulletin_expired" not in result.rules_fired
+    assert "bulletin_does_not_cover_departure" in result.rules_fired
+    assert result.max_allowed == "DO_NOT_ADVISE"
+    assert not any("expired" in n for n in result.notes)
+    assert any("cannot authorise a trip outside its own window" in n for n in result.notes)
+
+
+def test_a_departure_inside_the_window_does_not_trip_the_coverage_rule(
+    make_provenance, fixed_now, region
+):
+    ci = _ci(
+        make_provenance, fixed_now, region,
+        now=fixed_now,
+        target_time=fixed_now + timedelta(hours=3),
+    )
+    result = compute_ceiling(ci)
+
+    assert "bulletin_does_not_cover_departure" not in result.rules_fired
+    assert result.max_allowed == "GO"  # SLIGHT, nothing else binding
+
+
+def test_a_departure_before_the_window_starts_also_abstains(make_provenance, fixed_now, region):
+    ci = _ci(
+        make_provenance, fixed_now, region,
+        now=fixed_now,
+        target_time=fixed_now - timedelta(hours=6),  # valid_from is now - 1 h
+    )
+    result = compute_ceiling(ci)
+
+    assert "bulletin_does_not_cover_departure" in result.rules_fired
+    assert result.max_allowed == "DO_NOT_ADVISE"
+
+
+def test_an_actually_expired_bulletin_still_says_expired(make_provenance, fixed_now, region):
+    ci = _ci(
+        make_provenance, fixed_now, region,
+        now=fixed_now,
+        valid_from=fixed_now - timedelta(hours=20),
+        valid_to=fixed_now - timedelta(hours=8),
+        target_time=fixed_now,
+    )
+    result = compute_ceiling(ci)
+
+    assert "bulletin_expired" in result.rules_fired
+    # The expiry rule wins; the coverage rule must not also fire and say it twice.
+    assert "bulletin_does_not_cover_departure" not in result.rules_fired
+    assert any("expired 8.0 h ago" in n for n in result.notes)
+    assert result.max_allowed == "DO_NOT_ADVISE"
+
+
+def test_no_requested_time_means_only_currency_is_checked(make_provenance, fixed_now, region):
+    ci = _ci(make_provenance, fixed_now, region, now=fixed_now, target_time=None)
+    result = compute_ceiling(ci)
+
+    assert "bulletin_does_not_cover_departure" not in result.rules_fired
+    assert result.max_allowed == "GO"
+
+
+# --------------------------------------------------------------------------------------
 # 2a. Hard override — PortSignal != NIL caps at GO_WITH_CAUTION.
 # --------------------------------------------------------------------------------------
 
@@ -300,6 +377,7 @@ def test_llm_proposal_cannot_override_a_more_cautious_deterministic_baseline(
         observations=[hs_obs],
         vessel_class_id="small_motorised",
         when=fixed_now,
+        now=fixed_now,
         sea_condition="SLIGHT",  # band 3 -> ceiling cap is a plain GO; it must not bind here
         port_signal="NIL",
         storm_surge_warning=None,
@@ -336,6 +414,7 @@ def test_llm_proposal_is_adopted_when_it_is_more_cautious(
         observations=[hs_obs],
         vessel_class_id="small_motorised",
         when=fixed_now,
+        now=fixed_now,
         sea_condition="SLIGHT",
         port_signal="NIL",
         storm_surge_warning=None,
@@ -380,6 +459,7 @@ def test_different_vessel_classes_give_different_verdicts_on_identical_observati
             observations=[hs_obs],
             vessel_class_id=vessel_class_id,
             when=fixed_now,
+            now=fixed_now,
             # SMOOTH (band 2) caps every configured class at a plain GO, so the ceiling
             # never binds and the divergence below is purely the deterministic threshold
             # engine reading a different config entry per vessel class.

@@ -290,3 +290,57 @@ def test_get_hazard_alerts_carries_cyclone_track_when_active(monkeypatch, region
     for obs in track_var_obs:
         assert obs.provenance.authority == "JRC/GDACS"
         assert obs.provenance.source_id == "gdacs_tc"
+
+
+def test_a_cone_reaching_into_the_bbox_is_kept_even_when_no_storm_centre_is_inside(
+    monkeypatch, region
+):
+    """Events are filtered by storm *centroid*; cones and track lines by *feature overlap*.
+
+    Deriving "no active hazard" from the event count alone therefore threw away geometry
+    that genuinely reached the caller's area — and the boat map asks with a narrow ~0.6°
+    bbox around the vessel on every render, which is exactly the shape that triggers it.
+    A cyclone whose eye is 3° away but whose forecast cone is overhead must not be
+    reported as "no active cyclone hazard in this area".
+    """
+    lat0, lon0 = region.centre
+
+    # Eye well outside the narrow bbox below; cone overlapping it.
+    ev = _synthetic_event(region)
+    far_event = CycloneEvent(
+        event_id=ev.event_id,
+        episode_id=ev.episode_id,
+        name=ev.name,
+        alert_level=ev.alert_level,
+        from_date=ev.from_date,
+        to_date=ev.to_date,
+        lat=lat0 + 3.0,
+        lon=lon0 + 3.0,
+        country=ev.country,
+        severity=ev.severity,
+        is_current=True,
+    )
+    cone = {
+        "type": "Feature",
+        "bbox": [lon0 - 0.2, lat0 - 0.2, lon0 + 3.5, lat0 + 3.5],
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [lon0 - 0.2, lat0 - 0.2], [lon0 + 3.5, lat0 - 0.2],
+                [lon0 + 3.5, lat0 + 3.5], [lon0 - 0.2, lat0 + 3.5],
+                [lon0 - 0.2, lat0 - 0.2],
+            ]],
+        },
+        "properties": {"hazard_class": "cyclone_cone", "event_name": ev.name},
+    }
+
+    monkeypatch.setattr(GDACSCyclones, "events_near_region", lambda self: [far_event])
+    monkeypatch.setattr(GDACSCyclones, "exclusion_polygons", lambda self: ([cone], []))
+    monkeypatch.setattr(GDACSCyclones, "track_lines", lambda self: ([], []))
+
+    narrow = [lon0 - 0.6, lat0 - 0.6, lon0 + 0.6, lat0 + 0.6]
+    result = get_hazard_alerts(bbox=narrow)
+
+    assert result.payload["no_active_hazard"] is False
+    assert len(result.payload["polygons"]) == 1, "the overlapping cone must survive"
+    assert "No active tropical cyclone" not in result.summary

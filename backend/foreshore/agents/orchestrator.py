@@ -373,6 +373,9 @@ def answer(
         governing_ids=_governing_ids(observations),
         route=route,
         extras=_extras(results),
+        # The console is an analyst surface: its questions are analytical and its answers
+        # are allowed to run longer than the boat's four-sentence budget.
+        analytical=query.surface == "console",
     )
 
     clear_evidence(query_id)

@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterable, Sequence
 
 from ..config import RegionConfig, VesselClass, load_region, load_vessels
@@ -119,7 +120,14 @@ class CeilingInput:
     swell_period_s: float | None = None
     district: str | None = None
     vessel_class_id: str | None = None
+    #: Wall clock. Answers "is the bulletin FORESHORE holds still current?" Defaults to
+    #: `utcnow()`; pinned only by tests.
     now: datetime | None = None
+    #: The departure time the user actually asked about, when they named one. Answers the
+    #: different question "does the bulletin's window even cover that time?". Kept apart
+    #: from `now` on purpose: conflating the two made every "tomorrow morning" question
+    #: report that the bulletin had "expired N hours ago" when it was still current.
+    target_time: datetime | None = None
 
     @property
     def reading(self) -> SeaStateReading:
@@ -154,6 +162,16 @@ class CeilingResult:
             "long_period_swell": self.long_period_swell,
             "source": self.source.to_dict() if self.source else None,
         }
+
+
+#: Plain wording for the three verdict codes. Mirrors
+#: agents/synthesis.py's VERDICT_COPY headlines (en) — kept in sync by hand because the
+#: ceiling must not import the synthesis layer.
+_PLAIN_LEVEL: dict[str, str] = {
+    "GO": "Safe to go",
+    "GO_WITH_CAUTION": "Go with caution",
+    "DO_NOT_ADVISE": "Do not go",
+}
 
 
 def compute_ceiling(
@@ -197,14 +215,28 @@ def compute_ceiling(
             missing=missing, source=ci.bulletin_provenance,
         )
 
-    # -- 2. expiry ---------------------------------------------------------------------
+    # -- 2. expiry, and coverage of the requested departure time -------------------------
+    # Two different failures with two different sentences. "The bulletin we hold is out of
+    # date" is not the same as "the bulletin is current but stops before you plan to
+    # leave", and telling a fisherman the first when the second is true is a lie about the
+    # data. Both cap at DO_NOT_ADVISE — a bulletin cannot authorise outside its own window
+    # either way — but only the true one is said.
     expired = ci.valid_to is not None and now > ci.valid_to
     if expired:
         rules.append("bulletin_expired")
         age_h = (now - ci.valid_to).total_seconds() / 3600.0
         notes.append(
-            f"The IMD bulletin expired {age_h:.1f} h ago (valid to "
-            f"{ci.valid_to.isoformat()}). A stale ceiling cannot authorise a trip."
+            f"The IMD bulletin expired {age_h:.1f} h ago — it was valid only to "
+            f"{local_clock(ci.valid_to, region)}. A stale ceiling cannot authorise a trip."
+        )
+        caps.append("DO_NOT_ADVISE")
+    elif ci.target_time is not None and _outside_window(ci.target_time, ci.valid_from, ci.valid_to):
+        rules.append("bulletin_does_not_cover_departure")
+        notes.append(
+            f"The governing IMD bulletin runs only to {local_clock(ci.valid_to, region)}, "
+            f"and you asked about {local_clock(ci.target_time, region)}. It cannot authorise "
+            "a trip outside its own window. IMD issues a new coastal bulletin twice a day — "
+            "ask again once the one covering that time is out."
         )
         caps.append("DO_NOT_ADVISE")
 
@@ -216,7 +248,7 @@ def compute_ceiling(
         f"IMD gives sea condition {reading.raw!r} for {ci.coast_block or 'this coast'} — "
         f"worst band named is {reading.descriptor} (Douglas {reading.band}, Hs "
         f"{reading.hs_low_m}-{reading.hs_high_m} m). For a {vessel.label_en} that caps the "
-        f"advisory at {band_cap}."
+        f"advice at \"{_PLAIN_LEVEL.get(band_cap, band_cap)}\"."
     )
     if reading.escalating and len(reading.all_bands) > 1:
         notes.append(
@@ -229,7 +261,10 @@ def compute_ceiling(
     if hoisted:
         rules.append("port_signal_hoisted")
         caps.append("GO_WITH_CAUTION")
-        notes.append(f"A port signal is hoisted: {ci.port_signal!r}. Capped at GO_WITH_CAUTION.")
+        notes.append(
+            f"A port signal is hoisted: {ci.port_signal!r}. That caps the advice at "
+            f"\"{_PLAIN_LEVEL['GO_WITH_CAUTION']}\"."
+        )
 
     # -- 5. storm surge / tidal warning ------------------------------------------------
     named = warning_names_district(ci.storm_surge_warning, ci.district)
@@ -275,6 +310,64 @@ def compute_ceiling(
 
 # --------------------------------------------------------------------------------------
 
+#: Rule codes, said out loud. An unmapped code degrades to its own words rather than
+#: being dropped — a reason the reader cannot see is worse than an ugly one.
+_PLAIN_RULE: dict[str, str] = {
+    "missing_required_input": "a required input was missing",
+    "bulletin_expired": "the governing IMD bulletin is past its 12-hour validity",
+    "bulletin_does_not_cover_departure": (
+        "the governing IMD bulletin's window ends before the time you asked about"
+    ),
+    "douglas_band_cap": "the sea state IMD names is above this boat's limit",
+    "port_signal_hoisted": "a port signal is hoisted",
+    "storm_surge_names_district": "an IMD storm-surge warning names this district",
+    "kallakkadal_long_period_swell": "long-period swell — the kallakkadal signature",
+}
+
+
+def local_clock(dt: datetime | None, region: RegionConfig) -> str:
+    """A timestamp said the way a person says it, in the region's own timezone.
+
+    The ceiling notes are read aloud and shown on the boat card, and an ISO-8601 UTC
+    string in that position is unreadable — worse, it is in the wrong timezone for the
+    person reading it. The machine-readable value stays on the provenance record and in
+    the trace; this is only how it is spoken.
+    """
+    if dt is None:
+        return "an unknown time"
+    try:
+        local = dt.astimezone(ZoneInfo(region.timezone))
+    except Exception:  # noqa: BLE001 — a bad tz name must not sink a verdict
+        local = dt
+    label = local.tzname() or ""
+    return local.strftime("%H:%M on %a %d %b").replace(" 0", " ") + (f" {label}" if label else "")
+
+
+def _outside_window(
+    target: datetime, valid_from: datetime | None, valid_to: datetime | None
+) -> bool:
+    """True when ``target`` falls outside the bulletin's own validity window.
+
+    An unknown bound is not treated as a failure here — a missing validity window is
+    already caught by the required-input check above, which abstains for a different and
+    more specific reason.
+    """
+    if valid_from is not None and target < valid_from:
+        return True
+    if valid_to is not None and target > valid_to:
+        return True
+    return False
+
+
+def _plain_rules(rules: Iterable[str]) -> str:
+    said = [_PLAIN_RULE.get(r, r.replace("_", " ")) for r in rules]
+    if not said:
+        return "advisory ceiling"
+    if len(said) == 1:
+        return said[0]
+    return "; ".join(said[:-1]) + " and " + said[-1]
+
+
 HandoffProvider = Callable[[], Handoff | None]
 
 
@@ -285,11 +378,16 @@ def regional_handoff(reason: str, region: RegionConfig | None = None) -> Handoff
     """
     region = region or load_region()
     cg = region.coast_guard or {}
+    # 1554 is a real, published national emergency number — the one handoff contact that
+    # is verified, and therefore the one the UI may render as a dialable link.
     return Handoff(
         reason=reason,
         authority_name=cg.get("name", "Indian Coast Guard — Maritime Rescue"),
         authority_type="coast_guard",
         contact=str(cg.get("contact", "1554")),
+        contact_label="Maritime distress",
+        contact_verified=True,
+        vhf_channel="Ch 16",
     )
 
 
@@ -320,9 +418,15 @@ def apply_ceiling(
         verdict.downgraded_from = verdict.level
         verdict.level = result.max_allowed
         verdict.ceiling_applied = True
+        # This string is shown to a fisherman under "Why", so it says what happened in
+        # words. The machine-readable rule codes stay on `ceiling_rules_fired` /
+        # the stored trace for the console and the tests — nothing is lost, it is just
+        # not the version a person has to read.
         verdict.reasons.append(
-            f"Downgraded from {verdict.downgraded_from} to {verdict.level} by the advisory "
-            f"ceiling ({', '.join(result.rules_fired)})."
+            f"The IMD bulletin is stricter than our own reading, so the advisory ceiling "
+            f"lowered this from \"{_PLAIN_LEVEL.get(verdict.downgraded_from, verdict.downgraded_from)}\" "
+            f"to \"{_PLAIN_LEVEL.get(verdict.level, verdict.level)}\" "
+            f"({_plain_rules(result.rules_fired)})."
         )
 
     if verdict.level == "DO_NOT_ADVISE" and verdict.handoff is None:
@@ -351,6 +455,7 @@ def ceiling_summary(result: CeilingResult) -> str:
 
 __all__ = [
     "CeilingInput", "CeilingResult", "compute_ceiling", "apply_ceiling", "ceiling_summary",
+    "local_clock",
     "port_signal_is_nil", "warning_names_district", "districts_named", "regional_handoff",
     "HandoffProvider",
 ]

@@ -50,7 +50,15 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
     "ceiling_notes": ["…"],            // human-readable audit of every ceiling rule that fired
     "ceiling_source": { /* Provenance */ },
     "handoff": { "authority_name": "…", "authority_type": "landing_centre",
-                 "contact": "…", "distance_nm": 0.5 },   // required when DO_NOT_ADVISE
+                 "contact": "…", "contact_label": "Harbour control",
+                 "contact_verified": false,               // true only for a real published
+                                                          // number (Coast Guard 1554);
+                                                          // false = demo directory entry,
+                                                          // render as text, never tel:
+                 "vhf_channel": "Ch 16", "district": "…",
+                 "distance_nm": 0.5,
+                 "alternates": [ /* 0-2 further named centres, same shape */ ] },
+                                                          // required when DO_NOT_ADVISE
     "valid_from": "…", "valid_to": "…"
   },
   "evidence": [ { /* Observation, each with its Provenance */ } ],
@@ -67,6 +75,13 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
     // freshness is precomputed server-side into the `freshness` field instead.
     "labels": { /* UI strings in the answer's language */ },
     "verdict_copy": { /* headline + one-line reason in that language */ },
+    "template_text": "…",     // the no-model answer, before any prose generation
+    "unpolished_text": "…",   // the answer before the final editor pass
+    "polish": { "applied": true, "reason": null },
+    // The editor pass (agents/synthesis.py's `polish_answer`) rewrites the finished
+    // answer for readability only. Any rewrite that moves a number, the verdict, the
+    // named handoff or the language is discarded and `reason` says which check failed —
+    // `unpolished_text` is then what `text` already contains.
     "<tool_name>": { /* that tool's payload, e.g. disagreements, proximities, zones */ }
   },
   "unsourced_numbers": [],            // non-empty means synthesis stripped something — show it

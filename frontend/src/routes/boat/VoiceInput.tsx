@@ -6,6 +6,29 @@
  */
 import { useState } from "react";
 import { activeVoiceAdapter } from "@shared/voice";
+import "./ask.css";
+
+/** Inline mic glyph — replaces the old empty `<span>` that had a font-size but no
+ * content, which is exactly why the label looked off-centre. */
+function MicIcon() {
+  return (
+    <svg
+      className="voice-input__mic-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="8" y1="23" x2="16" y2="23" />
+    </svg>
+  );
+}
 
 export function VoiceInput({
   onSubmit,
@@ -27,7 +50,8 @@ export function VoiceInput({
     setVoiceError(null);
     setListening(true);
     activeVoiceAdapter
-      .listen("ta-IN")
+      // English-first for now — language selection returns when multilingual input is re-enabled.
+      .listen("en-IN")
       .then((transcript) => {
         setListening(false);
         if (!transcript.trim()) return;
@@ -65,8 +89,8 @@ export function VoiceInput({
             disabled={disabled}
             aria-label={listening ? "Stop listening" : "Ask by voice"}
           >
-            <span className="voice-input__mic-icon" aria-hidden="true" />
-            {listening ? "Listening…" : "Speak"}
+            <MicIcon />
+            <span className="voice-input__mic-label">{listening ? "Listening…" : "Speak"}</span>
           </button>
         ) : (
           <div className="voice-input__mic-unavailable">Voice input not supported in this browser — use text below.</div>

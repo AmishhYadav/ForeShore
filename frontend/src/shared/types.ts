@@ -70,11 +70,35 @@ export interface Observation {
   qualifiers: Record<string, unknown>;
 }
 
+/** One alternate landing centre offered alongside the primary handoff. */
+export interface HandoffAlternate {
+  authority_name: string;
+  authority_type: string;
+  district?: string | null;
+  contact: string | null;
+  contact_label?: string | null;
+  /** See `contact_verified` on Handoff — same rule applies. */
+  contact_verified?: boolean;
+  distance_nm: number | null;
+}
+
 export interface Handoff {
   authority_name: string;
-  authority_type: "landing_centre" | "coast_guard";
-  contact: string;
+  authority_type: "landing_centre" | "coast_guard" | "fisheries_office" | "port_office";
+  contact: string | null;
+  /** What the number reaches — "Harbour control", "Fisheries control room". */
+  contact_label?: string | null;
+  /**
+   * True only for a real, published number (currently just Coast Guard 1554). Numbers
+   * from the demo directory in `config/handoff_contacts.yaml` arrive with `false` and
+   * MUST be rendered as plain text, never as a `tel:` link — a placeholder number
+   * dialled in an emergency is the worst failure the abstention path can have.
+   */
+  contact_verified?: boolean;
+  vhf_channel?: string | null;
+  district?: string | null;
   distance_nm: number | null;
+  alternates?: HandoffAlternate[];
 }
 
 export interface Verdict {
@@ -208,6 +232,12 @@ export interface QueryOutcome {
     labels: Record<string, string>;
     /** VERDICT_COPY[level][language] — null only when no verdict was evaluated. */
     verdict_copy: { headline: string; lead: string } | null;
+    /** The answer before the final editor pass, and whether that pass ran. A rewrite
+     * that moved a number, the verdict, the named handoff or the language is discarded
+     * server-side and `reason` says which check failed — so `applied: false` means
+     * `text` is already this string. */
+    unpolished_text?: string;
+    polish?: { applied: boolean; reason: string | null };
     [toolPayloadKey: string]: unknown;
   };
   unsourced_numbers: string[];
@@ -335,7 +365,10 @@ export interface PfzDerivedPayload {
   method: Record<string, unknown>;
   granule: Record<string, unknown>;
   chlorophyll_available: boolean;
+  /** One short human sentence, safe to render. */
   chlorophyll_reason: string | null;
+  /** Full untruncated failure text — trace/debug only, never rendered in the boat UI. */
+  chlorophyll_reason_detail?: string | null;
   disclaimer: string;
 }
 

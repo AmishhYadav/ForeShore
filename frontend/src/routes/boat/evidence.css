@@ -1,0 +1,269 @@
+/* ============================================================================
+   Evidence Tab — grouped, side-by-side layout
+   ============================================================================
+   Same marine dark theme, glass-card look and animation feel as the rest of
+   boat.css (this file intentionally mirrors the retired .evidence-row /
+   .freshness-chip / .tag treatment token-for-token) — what changes here is
+   structure: rows are grouped by variable into categories, laid out in a
+   responsive grid instead of one full-width stack, with filter chips on top.
+   ============================================================================ */
+
+.evp-panel {
+  animation: fadeInUp 0.4s var(--ease-out) both;
+}
+
+.evp-heading {
+  font-family: var(--font-headline);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-50);
+  margin: 0 0 16px;
+}
+
+.evp-empty {
+  font-size: 14px;
+  color: var(--marine-on-surface-variant);
+  text-align: center;
+  padding: 24px;
+}
+
+/* ── Summary strip ─────────────────────────────────────────────────────────── */
+
+.evp-summary {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--marine-on-surface-variant);
+  padding: 10px 14px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.evp-summary__stat {
+  color: var(--ink-50);
+}
+
+.evp-summary__stale {
+  color: var(--verdict-caution);
+}
+
+/* ── Filter chips ──────────────────────────────────────────────────────────── */
+
+.evp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.evp-filter-chip {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--ink-800);
+  color: var(--marine-on-surface-variant);
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.evp-filter-chip:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--ink-50);
+}
+
+.evp-filter-chip--active {
+  background: var(--ink-800);
+  border-color: var(--marine-aqua-bright);
+  color: var(--marine-aqua-bright);
+}
+
+/* ── Category sections ─────────────────────────────────────────────────────── */
+
+.evp-category-section {
+  margin-bottom: 14px;
+}
+
+.evp-category {
+  background: transparent;
+}
+
+.evp-category__summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marine-aqua-bright);
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.evp-category__summary::-webkit-details-marker {
+  display: none;
+}
+
+.evp-category__chevron {
+  display: inline-block;
+  transition: transform var(--duration-fast) ease;
+  font-size: 10px;
+  color: var(--marine-on-surface-variant);
+}
+
+.evp-category[open] > .evp-category__summary .evp-category__chevron {
+  transform: rotate(90deg);
+}
+
+.evp-category__count {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--marine-on-surface-variant);
+  background: var(--ink-800);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  text-transform: none;
+}
+
+/* ── Grid ──────────────────────────────────────────────────────────────────── */
+
+.evp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 400px) {
+  .evp-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Variable cards ────────────────────────────────────────────────────────── */
+
+.evp-card {
+  padding: 14px 16px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  transition: all var(--duration-fast) ease;
+  min-width: 0;
+}
+
+.evp-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateX(2px);
+}
+
+.evp-card--governs {
+  border-color: rgba(31, 163, 122, 0.3);
+  border-left: 3px solid var(--verdict-go);
+}
+
+.evp-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.evp-card__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-50);
+  overflow-wrap: break-word;
+}
+
+.evp-card__primary {
+  font-family: var(--font-headline);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--marine-aqua-bright);
+  margin-bottom: 6px;
+  overflow-wrap: break-word;
+}
+
+.evp-card__differ {
+  margin: 0 0 8px;
+}
+
+.evp-card__readings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.evp-card__reading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--marine-on-surface-variant);
+  line-height: 1.4;
+}
+
+.evp-card__reading-text {
+  overflow-wrap: break-word;
+}
+
+.evp-card__acquired {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+/* ── Pills (same family as boat.css's .tag / .tag--governs / .tag--derived) ─── */
+
+.tag--differ {
+  background: rgba(224, 168, 21, 0.1);
+  color: var(--verdict-caution);
+  border: 1px solid rgba(224, 168, 21, 0.2);
+}
+
+/* ── Unsourced numbers callout ─────────────────────────────────────────────── */
+
+.evp-unsourced {
+  font-size: 12px;
+  color: var(--verdict-caution);
+  background: rgba(224, 168, 21, 0.08);
+  border: 1px solid rgba(224, 168, 21, 0.15);
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  margin-top: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evp-panel {
+    animation: none !important;
+  }
+  .evp-card,
+  .evp-card:hover,
+  .evp-filter-chip,
+  .evp-category__chevron {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}

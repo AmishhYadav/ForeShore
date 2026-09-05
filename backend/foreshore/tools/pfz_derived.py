@@ -360,6 +360,9 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
     # -- signal 2 (opportunistic): chlorophyll, attempted fresh every call ----------
     chlorophyll_available = False
     chlorophyll_reason: str | None = None
+    #: Full, untruncated failure text for the trace/debug view. Never rendered in the
+    #: boat UI — see the except-branch below.
+    chlorophyll_reason_detail: str | None = None
     chl_gs = None
     chl_on_sst: np.ndarray | None = None
     chl_grad_on_sst: np.ndarray | None = None
@@ -389,9 +392,17 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
                 "valid (non-fill) cells"
             )
     except Exception as exc:  # noqa: BLE001 -- chlorophyll is a bonus signal, never required
-        chlorophyll_reason = f"{type(exc).__name__}: {exc}"
+        # Two fields on purpose. `chlorophyll_reason` is shown to a fisherman under the
+        # chart, so it is one short human sentence; the raw exception text is a multi-line
+        # HTTP error body (the upstream 400 returns a full HTML page) and was being
+        # printed verbatim into the boat UI. The untruncated text stays available for the
+        # trace under `chlorophyll_reason_detail` — surfaced, not hidden, just not shouted.
+        chlorophyll_reason_detail = f"{type(exc).__name__}: {exc}"
         if isinstance(exc, SourceError) and exc.status == 400:
-            chlorophyll_reason += f" -- {_CHL_KNOWN_COVERAGE_NOTE}"
+            chlorophyll_reason = "this basin/date is outside the published chlorophyll grid"
+            chlorophyll_reason_detail += f" -- {_CHL_KNOWN_COVERAGE_NOTE}"
+        else:
+            chlorophyll_reason = f"the chlorophyll grid could not be read ({type(exc).__name__})"
 
     # -- per-zone statistics + provenance --------------------------------------------
     records = _zone_records(
@@ -528,6 +539,7 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
             "granule": granule_payload,
             "chlorophyll_available": chlorophyll_available,
             "chlorophyll_reason": chlorophyll_reason,
+            "chlorophyll_reason_detail": chlorophyll_reason_detail,
             "disclaimer": (
                 "This is a FORESHORE derivation, indicative only, computed from SST "
                 "(and chlorophyll where available) frontal structure -- it is not the "

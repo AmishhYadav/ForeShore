@@ -99,9 +99,23 @@ _COLOR_LABEL: dict[int, str] = {1: "green", 2: "yellow", 3: "orange", 4: "red"}
 
 #: AWS field -> (Observation.variable, unit). Only variables actually present and
 #: numeric on a given station are emitted.
+#: IMD's AWS portal publishes wind speed in km/h; every other producer of the canonical
+#: `wind_speed` variable emits knots, and `verdict/engine.py` compares the governing
+#: observation's raw number straight against `config/vessels.yaml`'s `wind_go_kn` /
+#: `wind_caution_kn` with no unit normalisation. Emitting km/h here would make 40 km/h
+#: (~21.6 kn, a caution) read as 40 kn and force DO_NOT_ADVISE — and this source ranks
+#: FIRST in engine.py's GOVERNING_SOURCE_ORDER for wind_speed, ahead of Open-Meteo.
+#: Convert at the edge, exactly as sources/openmeteo.py does.
+_KMH_TO_KN = 1.0 / 1.852
+
+#: Fields converted on the way out, keyed by the raw AWS field name. Only fields that
+#: `_AWS_VARS` actually emits belong here.
+_AWS_CONVERT: dict[str, float] = {"windspeed": _KMH_TO_KN}
+
 _AWS_VARS: dict[str, tuple[str, str]] = {
     "temp": ("temperature", "degC"),
-    "windspeed": ("wind_speed", "km/h"),
+    # Emitted in knots, not the km/h the portal publishes — see _KMH_TO_KN above.
+    "windspeed": ("wind_speed", "kn"),
     "winddir": ("wind_direction", "deg"),
     "rh": ("humidity", "%"),
     "mslp": ("pressure", "hPa"),
@@ -436,8 +450,9 @@ class IMDGeoServer(Source):
                 raw,
                 issued_at=issued_at,
                 notes=(
-                    "wind_speed unit (km/h) follows IMD's public AWS/ARG portal "
-                    "convention — not confirmed by this API's own metadata"
+                    "wind speed read as km/h per IMD's public AWS/ARG portal convention "
+                    "(not confirmed by this API's own metadata) and converted to knots, "
+                    "the canonical unit for wind_speed across every source"
                 ),
             )
             station_name = str(p.get("station") or "").strip() or str(p.get("id") or "unknown")
@@ -445,6 +460,9 @@ class IMDGeoServer(Source):
                 val = _numeric(p.get(field))
                 if val is None:
                     continue
+                factor = _AWS_CONVERT.get(field)
+                if factor is not None:
+                    val = val * factor
                 obs.append(self.observe(
                     variable=variable,
                     value=val,

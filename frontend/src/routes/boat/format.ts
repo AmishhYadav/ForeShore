@@ -44,6 +44,21 @@ const VERDICT_META: Record<VerdictLevel, VerdictMeta> = {
   DO_NOT_ADVISE: { fg: "var(--verdict-stop)", bg: "var(--verdict-stop-bg)" },
 };
 
+/** Plain-English wording for a verdict level. The enum values are storage codes, not
+ * words anyone says — every surface that shows a verdict to a fisherman renders this and
+ * keeps the code itself as a small provenance chip. Mirrors
+ * backend/foreshore/agents/synthesis.py's VERDICT_COPY headlines (en). */
+const PLAIN_VERDICT: Record<VerdictLevel, string> = {
+  GO: "Safe to go",
+  GO_WITH_CAUTION: "Go with caution",
+  DO_NOT_ADVISE: "Do not go",
+};
+
+export function plainVerdict(level: VerdictLevel | string | null | undefined): string {
+  if (level && level in PLAIN_VERDICT) return PLAIN_VERDICT[level as VerdictLevel];
+  return String(level ?? "").replace(/_/g, " ");
+}
+
 export function verdictMeta(level: VerdictLevel | string | null | undefined): VerdictMeta {
   if (level && level in VERDICT_META) return VERDICT_META[level as VerdictLevel];
   return { fg: "var(--ink-100)", bg: "var(--ink-800)" };
