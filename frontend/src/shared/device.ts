@@ -13,17 +13,17 @@ export function isMobileDevice(): boolean {
     return false;
   }
 
-  // Check user agent
+  // Check user agent (real iPhones, iPads, Android devices)
   const userAgentMatches = MOBILE_UA_REGEX.test(navigator.userAgent);
   if (userAgentMatches) {
     return true;
   }
 
-  // Check screen width and touch capability (e.g. mobile emulation or responsive viewports)
+  // Check screen width and touch capability or small mobile viewports (<= 640px)
   const isNarrowScreen = window.innerWidth < 768;
   const hasTouchCapability =
     (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 0) ||
     window.matchMedia("(pointer: coarse)").matches;
 
-  return isNarrowScreen && hasTouchCapability;
+  return (isNarrowScreen && hasTouchCapability) || window.innerWidth <= 640;
 }
