@@ -213,7 +213,8 @@ graph TB
     ConsoleUI <--> WS
 
     Routes --> Planner
-    PushEngine --> T9 & T10
+    PushEngine --> T9
+    PushEngine --> T10
     PushEngine --> WS
 
     Planner --> Specialists
@@ -343,7 +344,7 @@ sequenceDiagram
     end
 
     API-->>UI: Complete QueryOutcome JSON
-    UI-->>User: Display Verdict Card, Map & Spoken Tamil Voice
+    UI-->>User: Display Verdict Card, Map and Spoken Tamil Voice
 ```
 
 ### 6.2 The Proactive Push & Alert Loop
@@ -352,80 +353,80 @@ PS Requirements 7 & 8 mandate proactive alerting when adverse weather or boundar
 
 ```mermaid
 flowchart TD
-    Start([PushLoop Daemon Tick - Every 60s / 5s Demo]) --> Adv[1. Advance Vessel Dead-Reckoning Positions<br/>Heading, Speed, Elapsed Time]
-    Adv --> DynHazard[2. Refresh Dynamic Hazard Polygons<br/>Fetch GDACS Cones & High-Wave Storm Cells]
+    Start["PushLoop Daemon Tick - Every 60s / 5s Demo"] --> Adv["1. Advance Vessel Dead-Reckoning Positions<br/>Heading, Speed, Elapsed Time"]
+    Adv --> DynHazard["2. Refresh Dynamic Hazard Polygons<br/>Fetch GDACS Cones and High-Wave Storm Cells"]
     
-    DynHazard --> LoopVessels{3. For Each Tracked Vessel}
-    LoopVessels --> ProjectTrack[Project Trajectory Forward 40 Steps]
-    ProjectTrack --> GeoScan[4. Query VectorStore STRtree<br/>Measure Distance & Closing Velocity to Boundaries]
+    DynHazard --> LoopVessels{"3. For Each Tracked Vessel"}
+    LoopVessels --> ProjectTrack["Project Trajectory Forward 40 Steps"]
+    ProjectTrack --> GeoScan["4. Query VectorStore STRtree<br/>Measure Distance and Closing Velocity to Boundaries"]
     
-    GeoScan --> CheckLevels{Distance vs Thresholds}
-    CheckLevels -- "Inside Boundary" --> Breach[Emit BREACH Alert]
-    CheckLevels -- "Distance <= Critical Limit" --> Crit[Emit CRITICAL Alert]
-    CheckLevels -- "Distance <= Warn Limit & Closing" --> Warn[Emit WARN Alert]
-    CheckLevels -- "Outside or Opening" --> Clear[Clear Any Prior Alert]
+    GeoScan --> CheckLevels{"Distance vs Thresholds"}
+    CheckLevels -- "Inside Boundary" --> Breach["Emit BREACH Alert"]
+    CheckLevels -- "Distance <= Critical Limit" --> Crit["Emit CRITICAL Alert"]
+    CheckLevels -- "Distance <= Warn Limit and Closing" --> Warn["Emit WARN Alert"]
+    CheckLevels -- "Outside or Opening" --> Clear["Clear Any Prior Alert"]
 
-    Breach --> AlertStore[5. AlertStore Deduplication & Escalation]
+    Breach --> AlertStore["5. AlertStore Deduplication and Escalation"]
     Crit --> AlertStore
     Warn --> AlertStore
     Clear --> AlertStore
 
-    AlertStore --> CheckNew{Is Alert New or Escalated?}
-    CheckNew -- Yes --> WS[6. Broadcast via WebSocket /ws/alerts]
-    CheckNew -- No --> Suppress[Suppress Duplicate Spam]
+    AlertStore --> CheckNew{"Is Alert New or Escalated?"}
+    CheckNew -- "Yes" --> WS["6. Broadcast via WebSocket /ws/alerts"]
+    CheckNew -- "No" --> Suppress["Suppress Duplicate Spam"]
 
-    WS --> PushBoat[Push to Boat UI: Banner + Audio Chirp]
-    WS --> PushConsole[Push to Shore Console: Queue Update]
+    WS --> PushBoat["Push to Boat UI: Banner and Audio Chirp"]
+    WS --> PushConsole["Push to Shore Console: Queue Update"]
     
-    Suppress --> NextVessel[Next Vessel]
+    Suppress --> NextVessel["Next Vessel"]
     PushBoat --> NextVessel
     PushConsole --> NextVessel
     NextVessel --> LoopVessels
-    LoopVessels -- All Checked --> End([Wait for Next Tick])
+    LoopVessels -- "All Checked" --> EndNode["Wait for Next Tick"]
 ```
 
 ### 6.3 The Deterministic Safety Decision & Advisory Ceiling
 
 ```mermaid
 flowchart TD
-    In([Gathered Evidence Bus]) --> Extract[Extract Wave, Wind, Swell, Gusts, Currents]
-    Extract --> VLookup[Look Up Vessel Class Limits<br/>config/vessels.yaml]
+    In["Gathered Evidence Bus"] --> Extract["Extract Wave, Wind, Swell, Gusts, Currents"]
+    Extract --> VLookup["Look Up Vessel Class Limits<br/>config/vessels.yaml"]
     
     subgraph Baseline ["Deterministic Baseline Engine"]
-        VLookup --> CheckWave{Wave Height > Limit?}
-        CheckWave -- Yes --> SetCaution1[Cap at GO_WITH_CAUTION / DO_NOT_ADVISE]
-        CheckWave -- No --> CheckSteep{Steepness Hs/1.56Tp² > 0.04?}
-        CheckSteep -- Yes --> SetCaution2[Cap at GO_WITH_CAUTION]
-        CheckSteep -- No --> CheckWind{Wind > Limit?}
-        CheckWind -- Yes --> SetCaution3[Cap at GO_WITH_CAUTION]
-        CheckWind -- No --> BaseVerdict[Computed Level: GO / CAUTION / DO_NOT_ADVISE]
+        VLookup --> CheckWave{"Wave Height > Limit?"}
+        CheckWave -- "Yes" --> SetCaution1["Cap at GO_WITH_CAUTION / DO_NOT_ADVISE"]
+        CheckWave -- "No" --> CheckSteep{"Steepness Hs / (1.56 * Tp^2) > 0.04?"}
+        CheckSteep -- "Yes" --> SetCaution2["Cap at GO_WITH_CAUTION"]
+        CheckSteep -- "No" --> CheckWind{"Wind > Limit?"}
+        CheckWind -- "Yes" --> SetCaution3["Cap at GO_WITH_CAUTION"]
+        CheckWind -- "No" --> BaseVerdict["Computed Baseline: GO / CAUTION / DO_NOT_ADVISE"]
     end
 
-    BaseVerdict --> OptionalLLM{Optional Specialist Assessment}
-    OptionalLLM -- "LLM May Downgrade" --> LLMDowngrade[Downgrade to More Cautious Level]
-    OptionalLLM -- "LLM Attempts Upgrade" --> RejectUpgrade[REJECT: Cannot Make More Permissive]
+    BaseVerdict --> OptionalLLM{"Optional Specialist Assessment"}
+    OptionalLLM -- "LLM May Downgrade" --> LLMDowngrade["Downgrade to More Cautious Level"]
+    OptionalLLM -- "LLM Attempts Upgrade" --> RejectUpgrade["REJECT: Cannot Make More Permissive"]
     
     LLMDowngrade --> CeilingCheck
     RejectUpgrade --> CeilingCheck
     BaseVerdict --> CeilingCheck
 
     subgraph Ceiling ["Mandatory Advisory Ceiling Post-Check"]
-        CeilingCheck[Fetch IMD ACWC Chennai Coastal Bulletin] --> ParseDouglas[Parse Compound Sea Condition<br/>e.g. 'MODERATE TO ROUGH']
-        ParseDouglas --> WorstBand[Extract Worst Douglas Band: e.g. Band 5 ROUGH]
-        WorstBand --> CeilingCap[Determine Maximum Allowed Verdict for Vessel Class]
+        CeilingCheck["Fetch IMD ACWC Chennai Coastal Bulletin"] --> ParseDouglas["Parse Compound Sea Condition<br/>e.g. 'MODERATE TO ROUGH'"]
+        ParseDouglas --> WorstBand["Extract Worst Douglas Band: e.g. Band 5 ROUGH"]
+        WorstBand --> CeilingCap["Determine Maximum Allowed Verdict for Vessel Class"]
         
-        CeilingCap --> CompCeil{Is Candidate Verdict More Permissive<br/>than Ceiling Cap?}
-        CompCeil -- Yes --> Overrule[OVERRULE: Downgrade Candidate to Ceiling Cap<br/>Log Downgrade Reason in Evidence Panel]
-        CompCeil -- No --> Keep[Keep Candidate Level]
+        CeilingCap --> CompCeil{"Is Candidate Verdict More Permissive<br/>than Ceiling Cap?"}
+        CompCeil -- "Yes" --> Overrule["OVERRULE: Downgrade Candidate to Ceiling Cap<br/>Log Downgrade Reason in Evidence Panel"]
+        CompCeil -- "No" --> Keep["Keep Candidate Level"]
 
         Overrule --> Overrides
         Keep --> Overrides
 
         subgraph Overrides ["Hard Safety Overrides"]
-            PortSig{Port Signal != NIL?} -- Yes --> CapCaution[Cap at GO_WITH_CAUTION]
-            SurgeWarn{Storm Surge in District & Swell Period >= 15s?} -- Yes --> CapRefuse[Force DO_NOT_ADVISE (Kallakkadal Risk)]
-            StaleBull{Bulletin > 12h Old or Outside Validity?} -- Yes --> CapExpired[Force DO_NOT_ADVISE (Expired Ceiling)]
-            MissingInp{Missing Critical Safety Inputs?} -- Yes --> CapMissing[Force DO_NOT_ADVISE (Data Gap)]
+            PortSig{"Port Signal != NIL?"} -- "Yes" --> CapCaution["Cap at GO_WITH_CAUTION"]
+            SurgeWarn{"Storm Surge in District and Swell Period >= 15s?"} -- "Yes" --> CapRefuse["Force DO_NOT_ADVISE (Kallakkadal Risk)"]
+            StaleBull{"Bulletin > 12h Old or Outside Validity?"} -- "Yes" --> CapExpired["Force DO_NOT_ADVISE (Expired Ceiling)"]
+            MissingInp{"Missing Critical Safety Inputs?"} -- "Yes" --> CapMissing["Force DO_NOT_ADVISE (Data Gap)"]
         end
     end
 
@@ -436,10 +437,10 @@ flowchart TD
     Overrides --> FinalVerdict
 
     subgraph FinalVerdict ["Final Immutable Verdict"]
-        FVerdict[Final Verdict Object] --> Level{Verdict Level}
-        Level -- GO --> V1[Green Card: Safe to Venture]
-        Level -- GO_WITH_CAUTION --> V2[Amber Card: Cautionary Advisory]
-        Level -- DO_NOT_ADVISE --> V3[Red Card: Refusal & Named Human Handoff<br/>Nearest Landing Centre Master + Coast Guard 1554]
+        FVerdict["Final Verdict Object"] --> Level{"Verdict Level"}
+        Level -- "GO" --> V1["Green Card: Safe to Venture (GO)"]
+        Level -- "GO_WITH_CAUTION" --> V2["Amber Card: Cautionary Advisory (GO_WITH_CAUTION)"]
+        Level -- "DO_NOT_ADVISE" --> V3["Red Card: Refusal and Named Human Handoff (DO_NOT_ADVISE)<br/>Nearest Landing Centre Master + Coast Guard 1554"]
     end
 ```
 
@@ -449,40 +450,42 @@ Rather than generating fictional coordinates with an LLM, FORESHORE runs real gr
 
 ```mermaid
 flowchart LR
-    subgraph Inputs ["Geospatial & Hydrodynamic Inputs"]
-        R1[INCOIS OSF 11km Wave Nest<br/>Hs & Tp]
-        R2[Open-Meteo / IMD<br/>Winds & Gusts]
-        R3[INCOIS Currents<br/>Speed & Direction Grid]
-        R4[GEBCO Bathymetry<br/>Depth Grid]
-        V1[Static Coastline Mask<br/>Natural Earth 10m]
-        V2[Treaty Boundaries<br/>1974/1976 IMBL Polylines]
-        V3[Dynamic Hazards<br/>GDACS Cyclone Cones]
+    subgraph Inputs ["Geospatial and Hydrodynamic Inputs"]
+        R1["INCOIS OSF 11km Wave Nest<br/>Hs and Tp"]
+        R2["Open-Meteo / IMD<br/>Winds and Gusts"]
+        R3["INCOIS Currents<br/>Speed and Direction Grid"]
+        R4["GEBCO Bathymetry<br/>Depth Grid"]
+        V1["Static Coastline Mask<br/>Natural Earth 10m"]
+        V2["Treaty Boundaries<br/>1974/1976 IMBL Polylines"]
+        V3["Dynamic Hazards<br/>GDACS Cyclone Cones"]
     end
 
     subgraph CostBuild ["Cost Field Generation (routing/costfield.py)"]
-        Grid[Discrete Grid at 0.01° ≈ 1.1 km]
-        Build[Calculate Per-Cell Multi-Factor Cost]
-        HardBlock[Apply Hard INF Barriers:<br/>• Land Mask = INF<br/>• IMBL 0.3 nm Buffer = INF<br/>• Cyclone Polygons = INF<br/>• Depth < Vessel Draft = INF]
+        Grid["Discrete Grid at 0.01 deg ≈ 1.1 km"]
+        Build["Calculate Per-Cell Multi-Factor Cost"]
+        HardBlock["Apply Hard INF Barriers:<br/>• Land Mask = INF<br/>• IMBL 0.3 nm Buffer = INF<br/>• Cyclone Polygons = INF<br/>• Depth below Vessel Draft = INF"]
     end
 
     subgraph Search ["A* Graph Search (routing/astar.py)"]
-        Snap[Snap Port Coordinate to Nearest Passable Cell]
-        AStar[8-Connected Neighbourhood Search<br/>N, NE, E, SE, S, SW, W, NW]
-        Heuristic[Admissible Haversine Heuristic<br/>h = GreatCircle(cell, dest) * min_cost]
-        Adverse[Dynamic Vector Current Calculation<br/>Cost = DotProduct(Heading, CurrentVector)]
+        Snap["Snap Port Coordinate to Nearest Passable Cell"]
+        AStar["8-Connected Search<br/>N, NE, E, SE, S, SW, W, NW"]
+        Heuristic["Admissible Haversine Heuristic<br/>h = GreatCircle(cell, dest) * min_cost"]
+        Adverse["Dynamic Vector Current Calculation<br/>Cost = DotProduct(Heading, CurrentVector)"]
     end
 
     subgraph Output ["Route Result"]
-        Path[Optimized Waypoints]
-        Legs[Per-Leg Cost Breakdown]
-        Avoided[Identified Hazards Avoided<br/>Reefs, Cones, IMBL]
+        Path["Optimized Waypoints"]
+        Legs["Per-Leg Cost Breakdown"]
+        Avoided["Identified Hazards Avoided<br/>Reefs, Cones, IMBL"]
     end
 
     Inputs --> Grid --> Build --> HardBlock
     HardBlock --> Snap --> AStar
     Heuristic --> AStar
     Adverse --> AStar
-    AStar --> Path & Legs & Avoided
+    AStar --> Path
+    AStar --> Legs
+    AStar --> Avoided
 ```
 
 ---
