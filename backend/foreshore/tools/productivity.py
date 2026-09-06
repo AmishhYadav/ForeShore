@@ -683,7 +683,10 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
                     "n_points": chl_trend["n_points"],
                     "obs_start": chl_trend["obs_start"],
                     "obs_end": chl_trend["obs_end"],
-                    "note": "too few real observations at this point to fit a defensible decade trend",
+                    "note": (
+                        f"only {chl_trend['n_points']} real observation(s) at this "
+                        "point -- insufficient for a trend"
+                    ),
                 },
             ))
             missing.append("chlorophyll_trend")

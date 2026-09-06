@@ -2,19 +2,37 @@
 
 The repository ships no frozen fixtures yet (``data/fixtures/`` is empty — see
 ``test_provenance.py``'s module docstring), so a call through the real, unmocked
-registry in ``FORESHORE_MODE=fixture`` can only exercise the *abstention* path: both
-``IncoisArgo`` and ``IncoisThredds`` raise ``FixtureMissing``/``SourceError`` before any
-number is produced. That path is real and is tested directly below
+registry in ``FORESHORE_MODE=fixture`` can only exercise the *abstention* path: all
+three adapters raise ``FixtureMissing``/``SourceError`` before any number is produced.
+That path is real and is tested directly below
 (``test_real_registry_call_abstains_honestly_with_no_fixtures``) — it is exactly the
 same graceful-degradation contract the tool must satisfy on a dead upstream endpoint.
 
 To exercise the actual trend/caching/honesty logic inside ``productivity.py`` — which is
 the point of this module — the tests monkeypatch ``IncoisArgo.metadata``/``.timeseries``
-and ``IncoisThredds.catalog_dates``/``.point`` directly with small, realistic synthetic
-series, following the same boundary-mocking approach ``test_provenance.py`` uses to
-exercise ``verdict/engine.py`` without a live fixture. Every ``Observation`` the fakes
-return still carries a real, fully-populated ``Provenance`` — the fakes are standing in
-for the network round-trip, not for the provenance contract.
+directly with small, realistic synthetic series, following the same boundary-mocking
+approach ``test_provenance.py`` uses to exercise ``verdict/engine.py`` without a live
+fixture. Every ``Observation`` the fakes return still carries a real, fully-populated
+``Provenance`` — the fakes are standing in for the network round-trip, not for the
+provenance contract.
+
+**On the ``IncoisThredds`` fakes below.** This module originally wired the chlorophyll
+and SST signals to ``IncoisThredds`` (INCOIS's live ``osf/chl``/``osf/sst`` rolling
+composites) and this file's fakes patched that adapter accordingly. Both were replaced:
+``osf/chl`` never covered Palk Bay at all (a Pacific Islands Countries grid) and
+``osf/sst`` is a forward-looking forecast nest with no history to trend over —
+``productivity.py`` now reads chlorophyll from ISRO's own Oceansat-2 archive
+(``IncoisOceansat``, falling back to NOAA MODIS via ``OceanColour``) and SST from NOAA
+OISST v2.1 (also ``OceanColour``), both genuine multi-year records. The ``IncoisThredds``
+fakes and constants below (``_CHL_DATES``, ``_SST_VALUES``, ``_make_fake_catalog_dates``,
+``_make_fake_point``, and ``_patch_realistic_sources``'s own thredds patching) are now
+inert as far as ``get_productivity_history`` is concerned — the tool never calls
+``IncoisThredds`` any more — but are left in place rather than deleted: several tests
+below still invoke ``_patch_realistic_sources`` for its Argo fakes and CACHE_DIR
+isolation, and monkeypatching an adapter method nothing calls is harmless. The tests
+that used to exercise chlorophyll/SST behaviour through these thredds fakes have been
+retargeted below to the real new adapters (``IncoisOceansat``/``OceanColour``) — see
+each test's docstring for what changed and why.
 
 Each test that touches the Argo trend cache isolates ``store/cache.py``'s ``CACHE_DIR``
 to a fresh ``tmp_path`` so tests never see each other's cached computation.
@@ -28,8 +46,9 @@ from typing import Any
 import pytest
 
 from foreshore.models import UTC, Observation, Provenance, utcnow
-from foreshore.sources.incois_erddap import MAX_TIMESERIES_SPAN_DAYS, IncoisArgo
+from foreshore.sources.incois_erddap import MAX_TIMESERIES_SPAN_DAYS, IncoisArgo, IncoisOceansat
 from foreshore.sources.incois_thredds import PRODUCT_CANONICAL_VARS, UNITS, IncoisThredds
+from foreshore.sources.oceancolour import OceanColour
 from foreshore.store import cache as cache_store
 from foreshore.tools import registry
 from foreshore.tools.productivity import get_productivity_history
@@ -139,6 +158,60 @@ def _make_fake_point(values_by_product: dict[str, dict[date, float]]):
     return _fake
 
 
+# --------------------------------------------------------------------------------------
+# Fakes for the current chlorophyll/SST adapters (IncoisOceansat, OceanColour) --
+# these replace the IncoisThredds fakes above for the tests that actually exercise
+# chlorophyll/SST behaviour post-rewrite.
+# --------------------------------------------------------------------------------------
+
+
+def _make_fake_oceansat_chlorophyll_series(values_by_date: dict[date, float]):
+    """A small, realistic ``IncoisOceansat.chlorophyll_series`` fake: one Observation per
+    date in ``values_by_date`` that falls within ``[start, end]``, each carrying a real
+    ISRO/NRSC ``Provenance`` -- the fake stands in for the network round-trip, not for
+    the provenance contract."""
+
+    def _fake(self: IncoisOceansat, lat: float, lon: float, *, start: datetime, end: datetime) -> list[Observation]:
+        out: list[Observation] = []
+        for d in sorted(values_by_date):
+            dt = datetime(d.year, d.month, d.day, tzinfo=UTC)
+            if dt < start or dt > end:
+                continue
+            prov = Provenance(
+                source_id="incois_oceansat2",
+                source_name="INCOIS / ISRO Oceansat-2 Ocean Colour Monitor (incois_oceansat2_datasets)",
+                authority="ISRO/NRSC",
+                url="https://erddap.incois.gov.in/erddap/griddap/incois_oceansat2_datasets.csv?fake",
+                acquired_at=utcnow(),
+                issued_at=dt, valid_from=dt, valid_to=dt,
+                spatial_resolution_m=4_320.0,
+            )
+            out.append(Observation(
+                variable="chlorophyll_a", value=values_by_date[d], unit="mg/m^3",
+                lat=lat, lon=lon, valid_time=dt, provenance=prov,
+                qualifiers={
+                    "grid_lat": lat, "grid_lon": lon,
+                    "requested_lat": lat, "requested_lon": lon,
+                    "time_range_clamped": False,
+                },
+            ))
+        return out
+
+    return _fake
+
+
+def _fake_oceansat_chlorophyll_series_raises(self: IncoisOceansat, lat: float, lon: float, *, start: datetime, end: datetime) -> list[Observation]:
+    raise RuntimeError("simulated Oceansat ERDDAP outage")
+
+
+def _fake_oceancolour_chlorophyll_series_raises(self: OceanColour, lat: float, lon: float, *, start: datetime, end: datetime, product: str = "gapfilled") -> list[Observation]:
+    raise RuntimeError("simulated NOAA MODIS outage")
+
+
+def _fake_oceancolour_sst_series_raises(self: OceanColour, lat: float, lon: float, *, start: datetime, end: datetime) -> list[Observation]:
+    raise RuntimeError("simulated OISST outage")
+
+
 def _patch_realistic_sources(monkeypatch: pytest.MonkeyPatch, tmp_path, *, argo_metadata=None, argo_timeseries=None, catalog_dates=None, point=None) -> None:
     """Isolate the productivity-trend cache to ``tmp_path`` and install realistic (or
     caller-overridden) fakes for both adapters' relevant methods."""
@@ -182,52 +255,62 @@ def test_defaults_return_ok_and_every_observation_has_real_provenance(monkeypatc
 
 
 # --------------------------------------------------------------------------------------
-# 2. Chlorophyll/SST provenance must never claim a multi-year span.
+# 2. Chlorophyll provenance for a closed historical archive must say so plainly, never
+#    "recent"/"current" -- the inverse of what this slot originally tested. The old
+#    IncoisThredds-backed chlorophyll/SST signals really were short rolling windows that
+#    had to be *prevented* from reading as multi-year; the new Oceansat/OISST signals are
+#    genuinely multi-year, so the surviving honesty obligation flips: a signal that is
+#    real and multi-year but historical (Oceansat's archive ends 2020-05-01) must never
+#    be narrated as if it describes present conditions. Retargeted to the real adapter
+#    that replaced IncoisThredds here.
 # --------------------------------------------------------------------------------------
 
 
-def test_chl_and_sst_provenance_is_not_claimed_as_multiyear(monkeypatch, tmp_path):
-    _patch_realistic_sources(monkeypatch, tmp_path)
+def test_chl_provenance_honestly_labels_the_closed_historical_archive(monkeypatch, tmp_path):
+    _patch_realistic_sources(monkeypatch, tmp_path)  # Argo fakes + CACHE_DIR isolation
+    monkeypatch.setattr(
+        IncoisOceansat, "chlorophyll_series",
+        _make_fake_oceansat_chlorophyll_series({
+            date(2018, 1, 1): 0.40, date(2018, 2, 1): 0.42, date(2018, 3, 1): 0.39,
+        }),
+    )
+    monkeypatch.setattr(OceanColour, "sst_series", _fake_oceancolour_sst_series_raises)
 
     result = get_productivity_history()
 
-    recent_window_obs = [
-        o for o in result.observations
-        if o.variable.endswith("_recent_delta") or o.variable.endswith("_recent_level")
-    ]
-    assert recent_window_obs, "expected at least one chlorophyll/SST recent-window observation"
-
-    for obs in recent_window_obs:
-        prov = obs.provenance
-        if prov.valid_from is not None and prov.valid_to is not None:
-            span_days = (prov.valid_to - prov.valid_from).days
-            assert span_days <= 10, (
-                f"{obs.variable}: chlorophyll/SST provenance span is {span_days} days — "
-                "must read as a short rolling window, never a multi-year record"
-            )
-        # And the honesty language itself must be present, not just a short number.
-        assert prov.notes is not None
-        assert "not a multi-year record" in prov.notes.lower() or "not a multi-year record" in prov.notes
+    chl_obs = [o for o in result.observations if o.variable.startswith("chlorophyll_a")]
+    assert chl_obs, "expected a chlorophyll observation from the Oceansat fake"
+    prov = chl_obs[0].provenance
+    assert prov.is_derived is True
+    # Honestly cites the real archive end and says plainly it is not current.
+    assert "2020" in prov.notes
+    assert "not current" in prov.notes.lower() or "closed" in prov.notes.lower()
+    # And the user-facing summary must never call a 2011-2020 archive recent/current.
+    summary_lower = result.summary.lower()
+    assert "recent" not in summary_lower
+    assert "current" not in summary_lower or "not current" in summary_lower
 
 
 def test_chl_single_point_is_reported_as_a_level_not_a_fabricated_trend(monkeypatch, tmp_path):
-    """Only one real chlorophyll date on the live catalogue -> a 'recent level' reading,
-    never a slope computed from a single value."""
-    single_date = {date(2026, 8, 29): 0.37}
-    _patch_realistic_sources(
-        monkeypatch, tmp_path,
-        catalog_dates=_make_fake_catalog_dates({"chl": [date(2026, 8, 29)], "sst": _SST_DATES}),
-        point=_make_fake_point({"chl": single_date, "sst": _SST_VALUES}),
+    """Only one real chlorophyll date retrieved -> a 'level' reading, never a slope (and
+    never a noise floor, which needs a residual to estimate from a single point).
+    Retargeted from the old IncoisThredds rolling-window signal to the real Oceansat
+    signal that replaced it -- the invariant under test (a single point is never
+    narrated as a trend) is unchanged."""
+    _patch_realistic_sources(monkeypatch, tmp_path)
+    single_date = {date(2018, 6, 15): 0.37}
+    monkeypatch.setattr(
+        IncoisOceansat, "chlorophyll_series", _make_fake_oceansat_chlorophyll_series(single_date),
     )
 
     result = get_productivity_history()
 
     assert result.ok is True
-    assert "chl_recent_trend" in result.missing, "a single point is not a trend and must be reported missing"
-    level_obs = [o for o in result.observations if o.variable == "chlorophyll_a_recent_level"]
+    assert "chlorophyll_trend" in result.missing, "a single point is not a trend and must be reported missing"
+    level_obs = [o for o in result.observations if o.variable == "chlorophyll_a_level"]
     assert len(level_obs) == 1
     assert level_obs[0].qualifiers.get("n_points") == 1
-    assert "not a trend" in level_obs[0].qualifiers.get("note", "")
+    assert "insufficient" in level_obs[0].qualifiers.get("note", "").lower()
 
 
 # --------------------------------------------------------------------------------------
@@ -237,8 +320,8 @@ def test_chl_single_point_is_reported_as_a_level_not_a_fabricated_trend(monkeypa
 
 def test_real_registry_call_abstains_honestly_with_no_fixtures(tmp_path, monkeypatch):
     """Called through the real, unmocked registry in FORESHORE_MODE=fixture (set
-    session-wide by conftest.py) against an empty fixture directory, both adapters must
-    fail cleanly and the tool must degrade to an honest abstention — never a crash,
+    session-wide by conftest.py) against an empty fixture directory, all three adapters
+    must fail cleanly and the tool must degrade to an honest abstention — never a crash,
     never an invented narrative.
 
     Isolates *both* CACHE_DIR and FIXTURE_DIR to this test's own empty tmp_path.
@@ -257,7 +340,7 @@ def test_real_registry_call_abstains_honestly_with_no_fixtures(tmp_path, monkeyp
 
     assert result.ok is True
     assert result.partial is True
-    assert set(result.missing) == {"argo_subsurface_trend", "chl_recent_trend", "sst_recent_trend"}
+    assert set(result.missing) == {"argo_subsurface_trend", "chlorophyll_trend", "sst_trend"}
     assert result.observations == []
     assert "insufficient data for a productivity diagnostic" in result.summary
 
@@ -323,7 +406,11 @@ def test_argo_trend_is_cached_and_reused_on_second_call(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------------------
-# 5. Graceful degradation when both adapters fail outright.
+# 5. Graceful degradation when all three adapters fail outright. Retargeted: the old
+#    version only had to kill IncoisThredds once to take out both chlorophyll and SST
+#    (they shared one adapter); the new signals are wired to two different adapters
+#    (IncoisOceansat + OceanColour) and chlorophyll itself has an internal MODIS
+#    fallback, so all three of those must fail before chlorophyll is truly missing.
 # --------------------------------------------------------------------------------------
 
 
@@ -331,15 +418,25 @@ def test_degrades_gracefully_when_both_adapters_fail(monkeypatch, tmp_path):
     monkeypatch.setattr(cache_store, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(IncoisArgo, "metadata", _fake_argo_metadata_raises)
     monkeypatch.setattr(IncoisArgo, "timeseries", _fake_argo_timeseries_raises)
-    monkeypatch.setattr(IncoisThredds, "catalog_dates", _fake_catalog_dates_raises)
+    monkeypatch.setattr(IncoisOceansat, "chlorophyll_series", _fake_oceansat_chlorophyll_series_raises)
+    monkeypatch.setattr(OceanColour, "chlorophyll_series", _fake_oceancolour_chlorophyll_series_raises)
+    monkeypatch.setattr(OceanColour, "sst_series", _fake_oceancolour_sst_series_raises)
 
     result = get_productivity_history()
 
     assert result.ok is True
     assert result.partial is True
-    assert set(result.missing) == {"argo_subsurface_trend", "chl_recent_trend", "sst_recent_trend"}
+    assert set(result.missing) == {"argo_subsurface_trend", "chlorophyll_trend", "sst_trend"}
     assert result.observations == []
     assert "insufficient data for a productivity diagnostic" in result.summary
     diagnostics = result.payload.get("diagnostics", {})
     assert "simulated ERDDAP outage" in diagnostics.get("argo_subsurface_trend", "")
-    assert "simulated THREDDS catalogue outage" in diagnostics.get("chl_recent_trend", "")
+    assert "simulated Oceansat ERDDAP outage" in diagnostics.get("chlorophyll_trend", "")
+    assert "simulated NOAA MODIS outage" in diagnostics.get("chlorophyll_trend", "")
+    assert "simulated OISST outage" in diagnostics.get("sst_trend", "")
+    # Ordinary-language naming (constraint 3: no `_`-joined internal identifiers in a
+    # tool's user-facing summary) -- the exact bug this whole rewrite exists to fix.
+    assert "chl_recent_trend" not in result.summary
+    assert "sst_recent_trend" not in result.summary
+    assert "chlorophyll" in result.summary
+    assert "sea-surface temperature" in result.summary

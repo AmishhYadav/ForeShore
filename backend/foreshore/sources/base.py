@@ -173,7 +173,12 @@ class Source:
         for attempt in range(retries + 1):
             t0 = time.perf_counter()
             try:
-                resp = client().get(url, params=params, headers=hdrs)
+                resp = client().get(
+                    url,
+                    params=params,
+                    headers=hdrs,
+                    **({"timeout": timeout_s} if timeout_s is not None else {}),
+                )
                 latency = int((time.perf_counter() - t0) * 1000)
                 resp.raise_for_status()
                 payload: Any

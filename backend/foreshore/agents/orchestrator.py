@@ -570,10 +570,18 @@ def _specialist_brief(question: str, language: str, plan_steps: Sequence[Any]) -
 #: Tools whose summary is a finding a reader wants stated. Plan order is preserved, and
 #: the planner puts the tools the question actually asked for ahead of the mandatory
 #: safety additions — so on an informational answer the first sentence is the answer.
+#: Tools whose summary is part of the answer rather than part of the verdict's evidence.
+#: A tool missing from this list is planned, run, traced and audited — and then silently
+#: absent from the prose, which for a question the tool exists to answer means the answer
+#: does not contain it. `find_productive_waters` and `get_exclusion_zones` are the whole
+#: content of "which regions show high chlorophyll?" and "which zones should be avoided?"
+#: respectively, so leaving them out would have shipped both questions answered by a
+#: geofence list. Add a tool here whenever its output is something a user asked for.
 _EXTRA_TOOLS: tuple[str, ...] = (
     "find_vessels_near_boundary", "find_nearest_pfz", "get_tide", "get_currents",
     "check_geofences", "nearest_harbour", "plan_route", "get_lightning_nowcast",
     "get_hazard_alerts", "get_productivity_history", "derive_pfz_zones",
+    "find_productive_waters", "get_exclusion_zones",
 )
 
 

@@ -10,8 +10,13 @@ module was written:
   is not in it, has never been in it, and the NCSS 400 that ``incois_thredds`` fast-fails
   on is that miss, not a transient. Chlorophyll — one of the two signals INCOIS's own PFZ
   method rests on — has therefore never once been available to this system.
-* ``PFZ_Automation:pfzlines`` holds 65 features nationally and **every one of them** is
-  ``Year=2021, Julian_day=248``. The official advisory line is frozen at 5 Sep 2021.
+* ``PFZ_Automation:pfzlines`` served 65 features all dated ``Year=2021, Julian_day=248``
+  at 10:40 UTC and 79 features all dated ``Year=2026, Julian_day=249`` at 18:10 UTC the
+  same day — the official advisory line falls back to five-year-old content in the window
+  before the day's advisory publishes, with no error. (Corrected here: an earlier draft of
+  this docstring called it frozen at 2021, on the strength of the first probe alone. It is
+  not frozen; it is intermittent, which is why ``tools/pfz.py`` age-checks it rather than
+  routing around it.)
 
 So chlorophyll has to come from somewhere, and the honest options over the Bay of Bengal
 are NOAA's. Three keyless griddap datasets, each probed live over this region's bbox and
@@ -85,6 +90,37 @@ ERDDAP = "https://coastwatch.pfeg.noaa.gov/erddap"
 #: a continuous field is worth more to a front-detection method than a sharper one full
 #: of cloud holes.
 ChlProduct = Literal["gapfilled", "modis"]
+
+
+#: Wall-clock budget for one OISST series pull. The record is 45 years of daily steps, so
+#: even strided this is a genuinely large single round trip — measured at well over the
+#: shared client's 30 s default. See the call site.
+_SST_SERIES_TIMEOUT_S = 180.0
+
+#: Above this span, :func:`_sst_stride_days` subsamples rather than pulling every day.
+#: Two years of daily values is already far more than a slope needs.
+_SST_DAILY_SPAN_LIMIT_DAYS = 730.0
+
+#: The subsampling interval, in days, for a long SST series.
+#:
+#: Eight, for two reasons that both matter. It is the cadence of the 8-day chlorophyll
+#: composite this series gets compared against in the productivity diagnostic, so the two
+#: records are sampled alike rather than one being 8x denser for no analytical gain. And
+#: it is incommensurate with both the 365-day annual cycle and the ~30-day month, so
+#: subsampling does not fold the seasonal signal into the long-term slope — which a
+#: 30-day stride, sitting close to a harmonic of the year, is much more prone to do.
+_SST_STRIDE_DAYS = 8
+
+
+def _sst_stride_days(start: datetime, end: datetime) -> int:
+    """Days between sampled SST steps for a series spanning ``start``..``end``.
+
+    ``1`` (every day) for a short span, :data:`_SST_STRIDE_DAYS` for a long one. The
+    productivity diagnostic wants a trend, not a daily record, and a 45-year daily pull is
+    a request large enough to fail rather than merely be slow.
+    """
+    span_days = (end - start).total_seconds() / 86400.0
+    return _SST_STRIDE_DAYS if span_days > _SST_DAILY_SPAN_LIMIT_DAYS else 1
 
 
 @dataclass(frozen=True)
@@ -475,6 +511,18 @@ class OceanColour(Source):
         spec = DATASETS[product]
         meta = self.metadata(product)
         lat_ascending = bool(meta["lat_ascending"])
+        # Optical chlorophyll is inherently 2-3 days behind — the gap-filled composite's
+        # latest step was 2026-09-03 when "now" was 2026-09-06. A caller asking for the
+        # field "at" a departure time is therefore routinely asking past the end of the
+        # record, and ERDDAP answers that with a 404, not an empty result: every real
+        # query for today's chlorophyll failed this way, and the whole fallback chain
+        # reported "chlorophyll could not be obtained from any source" while all three
+        # sources were healthy. Clamp forward-of-record requests back to the newest
+        # published step. Nothing is hidden by this — the slice carries the step's real
+        # `valid_time` and `file_date`, so the answer still says how old the field is.
+        coverage_end = _parse_erddap_time(meta.get("time_coverage_end"))
+        if at is not None and coverage_end is not None and _aware(at) > coverage_end:
+            at = coverage_end
         time_expr = "(last)" if at is None else f"({_iso_z(at)})"
         dims_expr = _grid_dims_expr(spec, bbox=bbox, lat_ascending=lat_ascending, time_expr=time_expr)
         url = _csv_url(spec.dataset_id, spec.variables, dims_expr)
@@ -592,14 +640,20 @@ class OceanColour(Source):
                 self.source_id,
                 "sst_series: requested time range falls entirely outside the OISST record",
             )
-        time_expr = f"({_iso_z(clamped_start)}):({_iso_z(clamped_end)})"
+        stride = _sst_stride_days(clamped_start, clamped_end)
+        stride_expr = f"{stride}:" if stride > 1 else ""
+        time_expr = f"({_iso_z(clamped_start)}):{stride_expr}({_iso_z(clamped_end)})"
         dims_expr = _point_dims_expr(spec, lat=lat, lon=lon, time_expr=time_expr)
         url = _csv_url(spec.dataset_id, spec.variables, dims_expr)
         key = _cache_key(
             spec.dataset_id, "sst_series", lat=lat, lon=lon,
-            time_bound=f"{_iso_z(clamped_start)}:{_iso_z(clamped_end)}",
+            time_bound=f"{_iso_z(clamped_start)}:{stride}:{_iso_z(clamped_end)}",
         )
-        raw = self.get(url, key=key)
+        # A full-record pull is ~1100 rows x 2 variables and takes ERDDAP well past the
+        # shared client's 30 s budget; measured, it timed out three times with backoff and
+        # the whole diagnostic degraded to "SST unavailable". This is a request whose size
+        # is known and bounded, which is the only case `timeout_s` is for.
+        raw = self.get(url, key=key, timeout_s=_SST_SERIES_TIMEOUT_S)
         _cols, _units, rows = _parse_csv_text(raw.text)
         out: list[Observation] = []
         for row in rows:

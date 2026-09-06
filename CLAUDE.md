@@ -11,12 +11,20 @@ not taken from documentation. Re-run `scripts/healthcheck.py` each morning — o
 endpoints move.
 
 > **Reachable is not usable.** The 2026-09-06 re-probe found two sources answering `200`
-> with content that cannot support the claim made from it: `PFZ_Automation:pfzlines` is
-> frozen at 2021, and `osf/chl` is a Pacific grid that has never covered India. The
-> healthcheck said `8/8 OK` throughout. Both are corrected in the table below, and the
-> healthcheck now checks currency and coverage, not just reachability. When a source looks
-> fine and the answer looks wrong, check what the layer actually *contains* before
-> anything else.
+> with content that could not support the claim being made from it, while the healthcheck
+> said `8/8 OK` throughout:
+>
+> * `osf/chl` is a **Pacific** grid that has never covered India — a permanent miss.
+> * `PFZ_Automation:pfzlines` served **`Year=2021, Julian_day=248`** at 10:40 UTC and
+>   **`Year=2026, Julian_day=249`** (that same day) at 18:10 UTC. It is *not* frozen — it
+>   is a layer whose currency swings through the day, and which falls back to
+>   five-year-old content in the window before the day's advisory is published. Reading it
+>   without an age check means the answer silently alternates between today's advisory and
+>   a 2021 one, with identical wording.
+>
+> Both are handled below, and the healthcheck now checks currency and coverage, not just
+> reachability. When a source looks fine and the answer looks wrong, check what the layer
+> actually *contains* before anything else — and check it more than once.
 
 ---
 
@@ -185,7 +193,7 @@ them you get 403. This is the single most common way to lose a day.
 | AWS observations | same GeoServer → `imd:aws_data_layer` |
 | Cyclone track | same GeoServer → `imd:Cyclone_Track_V` (0 features when no active cyclone — valid, not an error) |
 | Cyclone cone + wind polygons | `gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC`, then `/polygons/getgeometry?eventtype=TC&eventid=&episodeid=` → `Poly_Cones`, `Poly_Red/Orange/Green`, track LineStrings |
-| **Official PFZ advisory lines** — ⚠ frozen, see below | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
+| **Official PFZ advisory lines** — ⚠ age-check required, see below | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
 | PFZ sectors | `PFZ_Sectors:sector_new` — `SOUTH TAMILNADU` = `SEC006` |
 | Landing centres (harbour handoff) | `PFZ_LandingCentres:LandingCenters_29Apr2024` — 541+ named, district + lat/lon |
 | Ecologically sensitive zones | `incois.gov.in/geoserver/MHW/ows` → `MHW:CORAL_REEF_DISS`, `MHW:SEAGRASS_ZONE_DISS`, `MHW:MANGROVE_ZONE_DISS` |
@@ -228,15 +236,24 @@ Chlorophyll now comes from a fallback chain: INCOIS `osf/chl` first (it still wi
 basin that grid covers, which is why it stays first), then NOAA gap-filled VIIRS, then
 MODIS-Aqua. `payload["chlorophyll_source"]` names whichever answered.
 
-**`PFZ_Automation:pfzlines` is frozen at 2021.** 65 features nationally, every one
-`Year=2021, Julian_day=248` — 5 Sep 2021. `GetCapabilities` on that workspace shows no
-replacement layer. The WFS answers normally, so nothing errors; `find_nearest_pfz` used to
-report a five-year-old line in the present tense and a model then dropped the date
-entirely, which is invariant 4 breached by omission. It now checks the advisory's age
-against `PFZ_ADVISORY_MAX_AGE_DAYS` and, past that, returns `partial=True,
-missing=["incois_pfzlines_current"]` with a summary that leads with the age. The line is
-still shown — it is real and official — but never as an answer to "where is the zone
-today".
+**`PFZ_Automation:pfzlines` swings between today's advisory and a 2021 one.** Probed twice
+on 2026-09-06: at 10:40 UTC it held 65 features nationally, every one `Year=2021,
+Julian_day=248`; at 18:10 UTC it held 79 features, every one `Year=2026, Julian_day=249` —
+that same day. So the layer is live, but in the window before the day's advisory is
+published it serves five-year-old content **under identical field names and with no error
+of any kind**. `GetCapabilities` on that workspace shows no second layer to prefer.
+
+This is worse than a dead source, because it is right most of the time.
+`find_nearest_pfz` used to report whatever it got in the present tense — a model then
+dropped the date entirely and the answer read as today's advisory, which is invariant 4
+breached by omission. It now checks the advisory's age against
+`PFZ_ADVISORY_MAX_AGE_DAYS` (7 days, sized to the source's own ~3-per-week cadence) and,
+past that, returns `partial=True, missing=["incois_pfzlines_current"]` with a summary
+leading on the age: *"No current official Potential Fishing Zone advisory is available for
+this area. The most recent line INCOIS publishes here was issued on 2021-09-05, about 5
+years ago…"*. The line is still returned — it is real and official — but never as an
+answer to "where is the zone today". **Do not remove this check because the layer looks
+current when you test it.** It looked current to me too, eight hours after it did not.
 
 ### Registration-gated (upside, not dependencies)
 
