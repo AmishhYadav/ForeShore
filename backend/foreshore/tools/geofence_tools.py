@@ -198,7 +198,7 @@ def check_geofences(
             ),
             payload={
                 "proximities": [],
-                "messages": {lang: [] for lang in region.languages},
+                "messages": {lang: [] for lang in region.surface_languages},
                 "legend": describe_classes(region.primary_language),
                 "worst_level": None,
                 "classes_present": [],
@@ -222,7 +222,12 @@ def check_geofences(
         )
 
     observations = [_observation_for_proximity(p, lat, lon) for p in results]
-    messages = {lang: [engine.message(p, lang) for p in results] for lang in region.languages}
+    # Surface languages, not every known language: this payload is read straight out by
+    # the boat UI and rendered verbatim in the console's trace inspector, so building the
+    # full set here is what put Tamil copy on an English-only screen.
+    messages = {
+        lang: [engine.message(p, lang) for p in results] for lang in region.surface_languages
+    }
     worst_level = max((p.level for p in results), key=lambda lvl: ALERT_RANK[lvl], default="INFO")
     classes_present = sorted({p.geofence_class for p in results})
 

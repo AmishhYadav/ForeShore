@@ -3,14 +3,17 @@ display_name_en: Palk Bay & Gulf of Mannar
 display_name_local: பாக் விரிகுடா மற்றும் மன்னார் வளைகுடா
 bbox: [78.0, 8.0, 80.6, 10.9]          # minlon, minlat, maxlon, maxlat (EPSG:4326)
 timezone: Asia/Kolkata
-# English-first for now: the UI chrome, alert copy and legends all render in the
-# region's primary_language, and mixed-language chrome was unreadable. Detection
-# still mirrors the user — a Tamil query is answered in Tamil — because ta is
-# still listed in `languages`. Flip primary_language back when the full
-# Tamil surface is finished.
+# English-only for now, answers included. UI chrome, alert copy and legends render in
+# primary_language, and answers are pinned separately by FORESHORE_LANGUAGE_LOCK
+# (orchestrator.py, defaults to en) because the no-model template path splices English
+# tool strings into the answer and a half-Tamil verdict is worse than an English one.
+# `ta` stays listed in `languages` and detection still resolves it (test_language.py) —
+# this is a gate, not a removal. Lift both pins together once Bhashini is in and the
+# tool-level strings are localised.
 primary_language: en
 fallback_language: en
-languages: [en, ta]
+languages: [en, ta]          # known + detectable
+surface_languages: [en]      # allowed to reach a screen — add `ta` to lift the pin
 
 anchor_ports:
   - name: Rameswaram

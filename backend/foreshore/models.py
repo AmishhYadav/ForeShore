@@ -376,6 +376,25 @@ class Alert:
     acknowledged_at: datetime | None = None
     acknowledged_by: str | None = None
     handoff: Handoff | None = None
+    #: Which of the title/body translations may cross the wire. The alert is always
+    #: composed in every language the region knows — that machinery stays exercised — but
+    #: only these reach a client, so a screen pinned to English can never be handed copy
+    #: it will not render. Set from `RegionConfig.surface_languages` by the push loop;
+    #: the default keeps a hand-built Alert English-only rather than leaking by omission.
+    surface_languages: tuple[str, ...] = ("en",)
+
+    def _localised(self, en: str, ta: str) -> dict[str, str]:
+        """The translations of one field, filtered to `surface_languages`.
+
+        `en` is always present regardless: it is the fallback every client already falls
+        back to, and an alert that reached a screen with no readable text at all would be
+        a worse failure than an untranslated one — this is the push path, and a geofence
+        breach must always be legible.
+        """
+        both = {"en": en, "ta": ta}
+        out = {code: text for code, text in both.items() if code in self.surface_languages}
+        out["en"] = en
+        return out
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -383,8 +402,8 @@ class Alert:
             "vessel_id": self.vessel_id,
             "kind": self.kind,
             "level": self.level,
-            "title": {"en": self.title_en, "ta": self.title_ta},
-            "body": {"en": self.body_en, "ta": self.body_ta},
+            "title": self._localised(self.title_en, self.title_ta),
+            "body": self._localised(self.body_en, self.body_ta),
             "lat": self.lat,
             "lon": self.lon,
             "created_at": self.created_at.isoformat(),

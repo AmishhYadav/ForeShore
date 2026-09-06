@@ -63,7 +63,15 @@ class RegionConfig:
     timezone: str
     primary_language: str
     fallback_language: str
+    #: Every language this region *knows* — what `agents.language.detect` may resolve a
+    #: query to, and what copy tables are maintained for. Not what reaches a screen.
     languages: tuple[str, ...]
+    #: Languages permitted to reach a UI surface: rendered copy, alert bodies, tool
+    #: payloads, anything a user or a judge can read. A strict subset of `languages`,
+    #: and the single gate for the English-only pin — everything else stays built and
+    #: tested but is filtered out at the surface. Defaults to `[primary_language]`, so a
+    #: region that never declares it can never leak a half-translated surface.
+    surface_languages: tuple[str, ...]
     anchor_ports: tuple[Port, ...]
     districts: tuple[str, ...]
     sources: dict[str, Any]
@@ -209,6 +217,15 @@ def load_region(region_id: str | None = None) -> RegionConfig:
         primary_language=d.get("primary_language", "en"),
         fallback_language=d.get("fallback_language", "en"),
         languages=tuple(d.get("languages", [d.get("primary_language", "en")])),
+        # Never widened by default: an absent key means primary_language only, and any
+        # code listed here that the region does not actually know is dropped rather than
+        # trusted — a surface language with no copy behind it renders as English anyway.
+        surface_languages=tuple(
+            code
+            for code in d.get("surface_languages", [d.get("primary_language", "en")])
+            if code in tuple(d.get("languages", [d.get("primary_language", "en")]))
+        )
+        or (d.get("primary_language", "en"),),
         anchor_ports=tuple(
             Port(p["name"], float(p["lat"]), float(p["lon"]), p.get("district"))
             for p in d.get("anchor_ports", [])

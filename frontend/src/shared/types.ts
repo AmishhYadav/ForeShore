@@ -277,8 +277,11 @@ export interface Alert {
   vessel_id: string;
   kind: "geofence" | "hazard" | "weather" | "verdict_change";
   level: AlertLevel;
-  title: { en: string; ta: string };
-  body: { en: string; ta: string };
+  /** `en` is always present; every other code is gated by the region's
+   *  `surface_languages` (models.py's `Alert._localised`) and absent while the
+   *  English-only pin is on. Always read `.en` unless you handle the missing case. */
+  title: { en: string; ta?: string };
+  body: { en: string; ta?: string };
   lat: number;
   lon: number;
   created_at: string;

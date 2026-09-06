@@ -3,14 +3,13 @@ display_name_en: Sir Creek & Gulf of Kutch
 display_name_local: સર ક્રીક અને કચ્છનો અખાત
 bbox: [68.0, 21.8, 71.5, 24.2]
 timezone: Asia/Kolkata
-# English-first for now: the UI chrome, alert copy and legends all render in the
-# region's primary_language, and mixed-language chrome was unreadable. Detection
-# still mirrors the user — a Gujarati query is answered in Gujarati — because gu is
-# still listed in `languages`. Flip primary_language back when the full
-# Gujarati surface is finished.
+# English-only for now, answers included — same gate as palk_bay_gom.yaml, see its
+# comment for the reasoning. `gu` stays listed in `languages` and detection still
+# resolves it (test_language.py); this is a gate, not a removal.
 primary_language: en
 fallback_language: en
-languages: [en, gu]
+languages: [en, gu]          # known + detectable
+surface_languages: [en]      # allowed to reach a screen — add `gu` to lift the pin
 
 anchor_ports:
   - name: Okha

@@ -184,14 +184,27 @@ def answer(
     t0 = time.perf_counter()
     region = region or load_region(query.region_id)
     query_id = query.query_id or str(uuid4())
-    # FORESHORE_LANGUAGE_LOCK=en (default) pins every answer to English regardless of
-    # detected/query language — Tamil mirroring is built (see language.py) but not yet
-    # ready to ship. Set FORESHORE_LANGUAGE_LOCK=auto to restore auto-detect-and-mirror.
+    # English-pinned until the Bhashini language stack is in (see CLAUDE.md's open
+    # unknowns). Detection itself works — `detect` returns `ta` for Tamil script, and
+    # synthesis carries full Tamil copy — but with no model reachable the answer is
+    # assembled by `synthesis.template_answer`, which splices tool observation strings
+    # in verbatim. Those strings are generated in English inside the tools, so a Tamil
+    # answer comes back as a Tamil headline wrapped around English bulletin and geofence
+    # text. Half-translated safety copy is worse than English safety copy, so the whole
+    # answer is pinned rather than shipped mixed. Nothing here is deleted: `ta` stays in
+    # the region's `languages`, VERDICT_COPY keeps its Tamil entries, and lifting the pin
+    # is a one-value change once the tool-level strings are localised.
+    #
+    # The lock is honoured only when the region declares that language — the same set
+    # `detect` is restricted to. A typo'd or unsupported code falls back to detection
+    # rather than being taken at face value: the copy tables fall back to English anyway
+    # (synthesis.py's VERDICT_COPY/LABELS), so honouring it would make `answer.language`
+    # claim a language the text is not written in.
     language_lock = (env("FORESHORE_LANGUAGE_LOCK", "en") or "en").strip().lower()
-    if language_lock == "auto":
-        language = query.language or detect(query.text, candidates=region.languages)
-    else:
+    if language_lock in region.languages:
         language = language_lock
+    else:
+        language = query.language or detect(query.text, candidates=region.languages)
 
     # A caller-supplied `when` always means "answer for exactly this instant" — only an
     # inferred-from-text time is ever ambiguous enough to be two candidate times at once.

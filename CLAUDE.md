@@ -304,7 +304,42 @@ Keep a second region file (`gujarat_sir_creek.yaml`) working purely to demonstra
 - Every tool call and result is persisted as a reasoning trace, retrievable and renderable.
   Explainability is a stored artifact, not post-hoc LLM narration.
 - Ingestion jobs are idempotent and record granule acquisition time on write.
-- Language is **auto-detected and mirrored** — never a dropdown.
+- Language is **auto-detected, never a dropdown** — script block first, then a romanised
+  fishing-domain lexicon (`agents/language.py`). **Output is English-only right now.** Do not
+  re-enable it piecemeal; see the gate below.
+
+### The English-only pin
+
+Two region-config keys, deliberately distinct:
+
+| Key | Means |
+|---|---|
+| `languages: [en, ta]` | what the region **knows** — what `detect` may resolve to, what copy tables are maintained for |
+| `surface_languages: [en]` | what may **reach a screen** — rendered copy, alert bodies, tool payloads, anything a user or judge can read |
+
+`surface_languages` is the single gate. It defaults to `[primary_language]`, so a region that
+never declares it cannot leak a half-translated surface. Enforced at four points:
+
+- `tools/geofence_tools.py` — `payload["messages"]` is built per surface language, not per
+  known language. Building the full set is what put Tamil in the console's trace inspector.
+- `models.py::Alert._localised` — gates `title`/`body` on the wire; `en` is always present,
+  because a geofence breach must stay legible whatever else is filtered.
+- `api/routes_reference.py::_region_dict` — `display_name_local` / `label_local` fall back to
+  their English twins while no non-English language surfaces.
+- `agents/orchestrator.py` — `FORESHORE_LANGUAGE_LOCK` (defaults `en`) pins the answer itself.
+
+**Why**, and the thing to fix before lifting it: with no model reachable the answer is built by
+`synthesis.template_answer`, which splices tool observation strings in verbatim — and those are
+generated in English *inside the tools*. A Tamil query therefore returns a Tamil headline wrapped
+around English bulletin and geofence text. Half-translated safety copy is worse than English
+safety copy.
+
+Nothing is deleted. `ta`/`gu` stay in `languages`, `VERDICT_COPY` and `config/geofence.yaml` keep
+their Tamil and Gujarati entries, `planner.py` keeps its Tamil intent keywords, and
+`backend/tests/test_language.py` holds detection to its contract while it is switched off.
+Lifting the pin means `surface_languages` **plus** `FORESHORE_LANGUAGE_LOCK` **plus** localising
+the tool-level strings — all three, or the mixed output returns immediately. Revisit when
+Bhashini lands (open unknown 3).
 
 ---
 

@@ -104,8 +104,14 @@ def test_safety_query_end_to_end_scripted_mode(tmp_path):
     assert outcome.verdict is not None
     assert outcome.verdict.level in get_args(VerdictLevel)
 
-    # -- language is auto-detected and mirrored, never assumed --------------------------
-    assert outcome.answer.language == "ta"
+    # -- answers are English-pinned until Bhashini lands --------------------------------
+    # The question above is Tamil script and `language.detect` resolves it to `ta` (see
+    # test_language_detection_still_resolves_tamil). The answer still comes back English
+    # because FORESHORE_LANGUAGE_LOCK defaults to `en`: with no model reachable, the
+    # answer is assembled by template splicing and the spliced tool strings are English,
+    # so mirroring would ship half-translated safety copy. This asserts the shipped
+    # behaviour; flip it to "ta" when the pin is lifted.
+    assert outcome.answer.language == "en"
 
     # -- Phase 3 acceptance criteria (PLAN.md / CLAUDE.md) -------------------------------
     assert len(outcome.answer.evidence) >= 4, (

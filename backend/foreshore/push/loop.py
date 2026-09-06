@@ -139,6 +139,7 @@ class PushLoop:
                     distance_nm=prox.distance_nm,
                     eta_seconds=prox.eta_seconds,
                     handoff=None,
+                    surface_languages=self.region.surface_languages,
                 )
 
                 result = self.alert_store.upsert(alert)

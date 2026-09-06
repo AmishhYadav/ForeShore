@@ -33,10 +33,19 @@ router = APIRouter(prefix="/api", tags=["reference"])
 
 def _region_dict(region) -> dict[str, Any]:
     vessels = load_vessels()
+    # `*_local` names are written in the region's own script (Tamil here, Gujarati in
+    # Sir Creek). They are config, not translations the copy tables own, so nothing else
+    # gates them — this endpoint does. While the region surfaces English only, the local
+    # name falls back to the English one rather than shipping script no screen will
+    # render; the config values themselves are untouched and return the moment
+    # `surface_languages` grows past `en`.
+    localised = any(code != "en" for code in region.surface_languages)
     return {
         "region_id": region.region_id,
         "display_name_en": region.display_name_en,
-        "display_name_local": region.display_name_local,
+        "display_name_local": (
+            region.display_name_local if localised else region.display_name_en
+        ),
         "bbox": list(region.bbox),
         "anchor_ports": [
             {"name": p.name, "lat": p.lat, "lon": p.lon, "district": p.district}
@@ -51,7 +60,7 @@ def _region_dict(region) -> dict[str, Any]:
             {
                 "class_id": v.class_id,
                 "label_en": v.label_en,
-                "label_local": v.label_local,
+                "label_local": v.label_local if localised else v.label_en,
                 "range_nm": v.range_nm,
                 "loa_m": v.loa_m,
                 "cruise_speed_kn": v.cruise_speed_kn,
