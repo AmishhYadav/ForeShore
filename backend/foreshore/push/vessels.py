@@ -25,6 +25,7 @@ from __future__ import annotations
 import random
 from dataclasses import replace
 from datetime import timedelta
+from typing import Callable
 
 from ..config import Port, RegionConfig, load_region, load_vessels
 from ..models import VesselState, bearing_deg, project_position, utcnow
@@ -172,4 +173,40 @@ def advance(vessel: VesselState, seconds: float) -> VesselState:
     )
 
 
-__all__ = ["advance", "default_fleet"]
+#: The live fleet, when a push loop is running in this process. `push/loop.py`'s
+#: `fleet_snapshot` is the single source of truth for current vessel positions; the
+#: request path's fleet tool must read the same positions the console map and the alert
+#: queue are showing, never a second, independently-drifting simulation.
+_fleet_provider: Callable[[], list[VesselState]] | None = None
+
+
+def set_fleet_provider(provider: Callable[[], list[VesselState]] | None) -> None:
+    """Register the running push loop's snapshot accessor. Called once, at startup."""
+    global _fleet_provider
+    _fleet_provider = provider
+
+
+def current_fleet(region: RegionConfig | None = None) -> tuple[list[VesselState], str]:
+    """Current tracked vessels and where they came from.
+
+    Returns ``(vessels, source)``. ``source`` is ``"push_loop"`` when a live loop is
+    registered, ``"cold_start"`` when no loop is running and a fresh deterministic
+    `default_fleet` is built instead (a query answered before/without the push thread —
+    positions are the loop's t=0 state, which is honest but not live), or ``"none"``
+    with an empty list when no fleet can be produced at all.
+    """
+    if _fleet_provider is not None:
+        try:
+            vessels = _fleet_provider()
+        except Exception:  # noqa: BLE001 — a failing simulator must not sink an agent turn
+            vessels = None
+        if vessels is not None:
+            return list(vessels), "push_loop"
+
+    try:
+        return default_fleet(region), "cold_start"
+    except Exception:  # noqa: BLE001 — no fleet is a valid, honestly-reported outcome
+        return [], "none"
+
+
+__all__ = ["advance", "default_fleet", "set_fleet_provider", "current_fleet"]

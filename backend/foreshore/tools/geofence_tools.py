@@ -24,7 +24,13 @@ from datetime import datetime
 from typing import Any, Sequence
 
 from ..config import RegionConfig, load_region
-from ..geofence.classes import ALERT_RANK, describe_classes, region_layers
+from ..geofence.classes import (
+    ALERT_RANK,
+    describe_classes,
+    format_eta,
+    region_layers,
+    title_for,
+)
 from ..geofence.engine import GeofenceEngine, shared_engine
 from ..models import (
     GeofenceClass,
@@ -85,6 +91,58 @@ def _required_static_layers(
         wanted = set(classes)
         layers = {lid: gc for lid, gc in layers.items() if gc in wanted}
     return layers
+
+
+#: Alert level -> what it means in words. The level codes are storage values; a reader is
+#: told how close they are, not which enum member fired.
+_LEVEL_WORDS: dict[str, str] = {
+    "BREACH": "inside it now",
+    "CRITICAL": "critically close",
+    "WARN": "within warning range",
+    "INFO": "clear for now",
+}
+
+
+def _summary_language(region: RegionConfig) -> str:
+    """Language the human-readable ``summary`` is written in.
+
+    The first declared *surface* language, not the first known one — this string is
+    spliced verbatim into an answer and into the console's trace inspector, which is the
+    exact path that put Tamil copy on an English-only screen (see CLAUDE.md's
+    English-only pin). Falls back to English, which every copy table carries.
+    """
+    return (region.surface_languages or ("en",))[0]
+
+
+def _proximity_sentence(prox: GeofenceProximity, lang: str) -> str:
+    """One boundary, said the way a person says it.
+
+    The class title carries the legal distinction — the 1974 historic-waters line and the
+    1976 maritime boundary read differently here because they *are* different, and
+    flattening them is the thing invariant 5 forbids.
+    """
+    title = title_for(prox.geofence_class, lang)
+    where = _LEVEL_WORDS.get(prox.level, _LEVEL_WORDS["INFO"])
+    # One name, not two. The feature's own name and the class title often overlap
+    # ("Marine National Park" / "Gulf of Mannar Marine National Park"), and printing both
+    # gave "Marine National Park (Gulf of Mannar Marine National Park)". Keep whichever
+    # is more specific when one contains the other; keep both only when they differ.
+    name = (prox.name or "").strip()
+    if not name:
+        subject = title
+    elif title.lower() in name.lower():
+        subject = name
+    elif name.lower() in title.lower():
+        subject = title
+    else:
+        subject = f"{title} ({name})"
+    # No closing ETA once inside — see the same guard in tools/fleet_tools.py.
+    eta = (
+        f", closing in {format_eta(prox.eta_seconds, lang)}"
+        if prox.eta_seconds is not None and not prox.inside
+        else ""
+    )
+    return f"{subject}: {prox.distance_nm:.2f} nm, {where}{eta}."
 
 
 def _observation_for_proximity(prox: GeofenceProximity, lat: float, lon: float) -> Observation:
@@ -232,8 +290,15 @@ def check_geofences(
     classes_present = sorted({p.geofence_class for p in results})
 
     if results:
-        summary = "; ".join(
-            f"{p.geofence_class} '{p.name}' {p.distance_nm:.2f} nm ({p.level})" for p in results
+        # Prose, not enum codes. This summary is spliced verbatim into the answer a
+        # fisherman reads, so "MPA 'Gulf of Mannar Marine National Park' 0.00 nm
+        # (BREACH)" is the same class of defect that `humanise_verdict_codes` exists to
+        # stop for verdicts. The class titles come from config/geofence.yaml via
+        # `title_for`, which keeps the five classes distinct (invariant 5) instead of
+        # flattening them into "a restricted zone", and keeps the wording in config
+        # rather than in application logic (invariant 6).
+        summary = " ".join(
+            _proximity_sentence(p, _summary_language(region)) for p in results
         )
     else:
         summary = (

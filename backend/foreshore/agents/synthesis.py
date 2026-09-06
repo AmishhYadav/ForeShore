@@ -99,6 +99,7 @@ LABELS: dict[str, dict[str, str]] = {
         "boundaries": "Boundaries",
         "route": "Route",
         "unavailable": "not available",
+        "safety_note": "Safety note for this position and time",
     },
     "ta": {
         "evidence": "ஆதாரம்",
@@ -111,6 +112,7 @@ LABELS: dict[str, dict[str, str]] = {
         "boundaries": "எல்லைகள்",
         "route": "பாதை",
         "unavailable": "கிடைக்கவில்லை",
+        "safety_note": "இந்த இடத்திற்கும் நேரத்திற்கும் பாதுகாப்பு குறிப்பு",
     },
     "gu": {
         "evidence": "પુરાવા",
@@ -123,6 +125,7 @@ LABELS: dict[str, dict[str, str]] = {
         "boundaries": "સીમાઓ",
         "route": "માર્ગ",
         "unavailable": "ઉપલબ્ધ નથી",
+        "safety_note": "આ સ્થળ અને સમય માટે સલામતી નોંધ",
     },
 }
 
@@ -139,6 +142,8 @@ You are given a verdict that has ALREADY been decided by deterministic code and 
 the governing IMD bulletin. You cannot change it, argue with it, or soften it. Your job is
 to say it clearly in the reader's own language and explain the reasoning.
 
+{answer_kind_rule}
+
 Hard rules:
 - Write in {language_name} and only {language_name}.
 - You may state ONLY numbers that appear in the evidence below, exactly as given. Do not
@@ -153,10 +158,35 @@ Hard rules:
   early. No jargon that a fisherman would not use.
 - NEVER write the internal verdict codes GO, GO_WITH_CAUTION or DO_NOT_ADVISE. They are
   database values, not words a person says. Use the plain wording you are given below.
-- Open with the plain-language verdict as a complete sentence, then the reason. Do not
-  open with a bare label followed by a full stop.
+- Do not open with a bare label followed by a full stop. Every line is a real sentence.
 - Four sentences at most unless the question was analytical.
 """
+
+#: What "answer the question" means for each kind. Substituted into SYNTHESIS_SYSTEM.
+#:
+#: The bug this exists to kill: every answer used to open with the verdict, so "which
+#: vessels are closest to the IMBL" came back as "Do not go." — a refusal-shaped reply to
+#: a question that was never about going anywhere. The verdict still runs, is still shown
+#: and still cannot be softened; it just stops pretending to be the answer.
+ANSWER_KIND_RULES: dict[str, str] = {
+    "ADVISORY": (
+        "THE QUESTION IS A GO/NO-GO QUESTION. The verdict IS the answer. Open with the "
+        "plain-language verdict as a complete sentence, then give the reason."
+    ),
+    "INFORMATIONAL": (
+        "THE QUESTION IS NOT A GO/NO-GO QUESTION. It asks for a fact, a position, a "
+        "count, a history or an explanation. ANSWER THAT QUESTION, from the evidence "
+        "below, in your own first sentences.\n"
+        "The verdict is safety context for this position and time, not the answer, and "
+        "you must never present it as a refusal to answer what was asked. State it in "
+        "one short sentence, using the exact plain wording you are given:\n"
+        "- if the verdict is the permissive one, put that sentence LAST;\n"
+        "- otherwise put it FIRST, then answer the question — a reader asking about the "
+        "sea while conditions are against them needs both, in that order.\n"
+        "If the evidence does not contain what was asked for, say plainly that it is not "
+        "available. Do not substitute the verdict for the missing answer."
+    ),
+}
 
 
 # --------------------------------------------------------------------------------------
@@ -221,22 +251,64 @@ def evidence_panel(
     return [r.to_dict() for r in rows]
 
 
-def template_answer(
-    verdict: Verdict,
-    lang: str,
-    *,
-    region: RegionConfig | None = None,
-    extras: Sequence[str] = (),
-) -> str:
-    """The answer FORESHORE gives with no language model in the loop at all.
+#: Sentence terminators this codebase's copy actually uses — ASCII, plus the Devanagari
+#: danda already handled by :func:`strip_unsourced`'s split.
+_TERMINATORS = ".!?।"
+_WS = re.compile(r"\s+")
 
-    Everything load-bearing is here: the verdict, the reason the ceiling gave, the named
-    handoff. The model makes this sound human; it does not make it correct.
+
+def _dedupe_key(sentence: str) -> str:
+    """Normalised form two sentences are considered the same by: case, whitespace and
+    trailing punctuation folded away. Tool summaries reach this function from several
+    tools at once and a summary repeated verbatim is the commonest way the answer ends
+    up saying one thing twice."""
+    return _WS.sub(" ", sentence.strip().rstrip(_TERMINATORS).strip()).lower()
+
+
+def as_sentences(parts: Iterable[str]) -> list[str]:
+    """Trim, terminate and deduplicate the fragments spliced into an answer.
+
+    Tool summaries are written to stand alone, so some end in a full stop and some do
+    not; joined with a bare space, an unterminated one runs straight into the next
+    ("... 0.23 nm (WARN) Nearest landing centre: ..."). This gives every fragment exactly
+    one terminator and drops any it has already said.
     """
-    region = region or load_region()
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in parts:
+        s = _WS.sub(" ", (raw or "").strip())
+        if not s:
+            continue
+        key = _dedupe_key(s)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(s if s[-1] in _TERMINATORS else s + ".")
+    return out
+
+
+def _verdict_block(verdict: Verdict, lang: str, *, framed: bool) -> tuple[list[str], list[str]]:
+    """The verdict, said in words, split into ``(lead, detail)``.
+
+    ``lead`` is the two sentences that must reach the reader whatever else happens: the
+    plain-language verdict and its one-line consequence. ``detail`` is the audit trail —
+    the ceiling's reason, the downgrade disclosure, the named handoff — which is
+    load-bearing but can follow the answer to an informational question without any of
+    it being lost.
+
+    ``framed`` prefixes the lead with the "safety note" label, which is what turns the
+    block from *the answer* into *context attached to an answer*.
+    """
     copy = VERDICT_COPY.get(verdict.level, VERDICT_COPY["DO_NOT_ADVISE"])
     words = copy.get(lang) or copy["en"]
-    parts: list[str] = [words["headline"] + ".", words["lead"]]
+
+    head = (
+        f"{label('safety_note', lang)} — {words['headline']}."
+        if framed
+        else words["headline"] + "."
+    )
+    lead: list[str] = [head, words["lead"]]
+    parts: list[str] = []
 
     if verdict.ceiling_notes:
         parts.append(verdict.ceiling_notes[0])
@@ -244,9 +316,14 @@ def template_answer(
         parts.append(verdict.reasons[0])
 
     if verdict.downgraded_from:
-        parts.append(
-            f"{label('downgraded', lang)}: {verdict.downgraded_from} -> {verdict.level}."
-        )
+        # The levels themselves are deliberately NOT named here. They are storage values
+        # — the same thing `humanise_verdict_codes` strips out of model prose — and this
+        # line used to print them raw ("GO_WITH_CAUTION -> DO_NOT_ADVISE"), which also
+        # meant every downgraded answer carried another verdict's wording and so was
+        # rejected outright by `polish_is_safe`. The downgrade is a structural fact; both
+        # UIs render `downgraded_from` on the verdict card. Prose says only that it
+        # happened, which is what the reader needs.
+        parts.append(f"{label('downgraded', lang)}.")
 
     if verdict.level == "DO_NOT_ADVISE" and verdict.handoff:
         h = verdict.handoff
@@ -260,8 +337,49 @@ def template_answer(
         )
         parts.append(f"{label('handoff', lang)}: {h.authority_name}{contact}{dist}.")
 
-    parts.extend(extras)
-    return " ".join(p for p in parts if p)
+    return lead, parts
+
+
+def template_answer(
+    verdict: Verdict,
+    lang: str,
+    *,
+    region: RegionConfig | None = None,
+    extras: Sequence[str] = (),
+    answer_kind: str = "ADVISORY",
+) -> str:
+    """The answer FORESHORE gives with no language model in the loop at all.
+
+    Everything load-bearing is here: the verdict, the reason the ceiling gave, the named
+    handoff. The model makes this sound human; it does not make it correct.
+
+    ``answer_kind`` decides the *order*, never the content — the verdict block below is
+    byte-identical either way apart from its framing label:
+
+    ``ADVISORY``
+        The question was "should I go". The verdict leads in full, the findings follow.
+    ``INFORMATIONAL`` with a ``GO`` verdict
+        The question was about the world. It is answered first and the verdict trails.
+    ``INFORMATIONAL`` with any other verdict
+        The two-sentence safety lead goes **first** — someone asking where the fish are
+        while the bulletin has expired is told that before anything else — then the
+        answer to their question, then the rest of the safety detail. CLAUDE.md's
+        "favour the safety path" resolved without burying the answer or turning it into
+        a refusal to answer.
+    """
+    region = region or load_region()
+    informational = answer_kind == "INFORMATIONAL"
+    lead, detail = _verdict_block(verdict, lang, framed=informational)
+    findings = list(extras)
+
+    if not informational:
+        parts = lead + detail + findings
+    elif verdict.level == "GO":
+        parts = findings + lead + detail
+    else:
+        parts = lead + findings + detail
+
+    return " ".join(as_sentences(parts))
 
 
 def strip_unsourced(text: str, evidence: Sequence[Observation]) -> tuple[str, list[str]]:
@@ -331,7 +449,13 @@ def normalise_prose(text: str) -> str:
     out = _MULTI_SPACE.sub(" ", out)
     out = _SPACE_BEFORE_PUNCT.sub(r"\1", out)
     out = _MISSING_SPACE_AFTER.sub(r"\1 ", out)
-    return out.strip()
+    out = out.strip()
+    # A model that ends on a name rather than a sentence ("... Rameswaram Fishing Harbour
+    # — Harbour Master") leaves the answer looking truncated, which on a safety advisory
+    # reads as something having gone wrong. Adding the stop changes no word.
+    if out and out[-1] not in _TERMINATORS and out[-1] not in "\"')]":
+        out += "."
+    return out
 
 
 POLISH_SYSTEM = """You are the final editor of FORESHORE, a marine safety advisory read by
@@ -354,6 +478,40 @@ You may NOT:
 
 Write {sentence_budget}. Short sentences. This may be read aloud over an engine, to
 someone who left school early. Reply with the rewritten answer and nothing else."""
+
+
+#: Splits an authority name from the role appended to it — "Rameswaram Fishing Harbour
+#: — Harbour Master" -> "Rameswaram Fishing Harbour". Prose legitimately drops the role;
+#: it must not legitimately drop the place.
+_AUTHORITY_ROLE_SPLIT = re.compile(r"\s*[—–(,]|\s+-\s+")
+
+
+def handoff_place(handoff: Any) -> str:
+    """The part of the authority name that has to survive: the named place."""
+    name = (getattr(handoff, "authority_name", "") or "").strip()
+    return _WS.sub(" ", _AUTHORITY_ROLE_SPLIT.split(name, maxsplit=1)[0]).strip()
+
+
+def handoff_present(text: str, handoff: Any) -> bool:
+    """Is the named human authority actually in this text?
+
+    Matched on the whole place phrase, not on its first token. The first token is the
+    port name, and this coast's vessels are named after their port — so a sentence
+    reading "Rameswaram FB-01 and Rameswaram FB-05 are the closest" satisfied a check
+    for "Rameswaram", and an answer with nobody to call sailed through both of this
+    module's guards. The trailing role ("— Harbour Master") is not required: prose drops
+    it naturally and the place is what a person needs.
+    """
+    place = handoff_place(handoff)
+    if not place:
+        return True
+    haystack = _WS.sub(" ", text or "").lower()
+    if " " in place:
+        return place.lower() in haystack
+    # Single-word authority names are not what the landing-centre list actually contains,
+    # but a bare substring test on one would bring the vessel-name collision straight
+    # back. Word boundaries are the most this can do without a name to disambiguate on.
+    return re.search(rf"(?<!\w){re.escape(place.lower())}(?!\w)", haystack) is not None
 
 
 def _number_tokens(text: str) -> set[str]:
@@ -398,20 +556,25 @@ def polish_is_safe(
         mine = _plain_verdict(verdict.level, language).lower()
         if mine and mine not in lowered:
             return "dropped the verdict wording"
+        original_lowered = original.lower()
         for level in VERDICT_COPY:
             if level == verdict.level:
                 continue
             other = _plain_verdict(level, language).lower()  # type: ignore[arg-type]
-            # A different verdict's headline appearing is how a rewrite silently changes
-            # the answer — the single failure this whole guard exists to catch.
-            if other and other in lowered:
+            # A different verdict's headline *appearing where it was not already* is how
+            # a rewrite silently changes the answer — the single failure this whole guard
+            # exists to catch. Checked against the pre-polish text rather than absolutely:
+            # a phrase the original legitimately contained is not something the editor
+            # introduced, and rejecting it would disable polish on those answers entirely.
+            if other and other in lowered and other not in original_lowered:
                 return f"introduced the wording of {level}"
 
-        if verdict.handoff is not None:
-            # First token of the authority name: the rewrite may reword the title around
-            # it, but the place itself has to survive.
-            anchor = verdict.handoff.authority_name.split()[0] if verdict.handoff.authority_name else ""
-            if anchor and anchor.lower() not in cand.lower():
+        # The place itself has to survive the rewrite. Only checked when the text the
+        # editor was given actually had it — polish is not the layer that puts a missing
+        # handoff back (`enforce_answer_contract` is), and failing here on an input that
+        # never had one would disable polish instead of fixing anything.
+        if verdict.handoff is not None and handoff_present(original, verdict.handoff):
+            if not handoff_present(cand, verdict.handoff):
                 return "dropped the named handoff"
 
     if script_language(cand) != script_language(original):
@@ -474,6 +637,96 @@ def polish_answer(
     return candidate, list(result.steps), note
 
 
+def answers_the_question(text: str, findings: Sequence[str]) -> bool:
+    """Did a model asked an informational question actually answer it?
+
+    Checked on numbers, because on this system the substance of a finding *is* its
+    numbers — a distance to a boundary, a count of vessels, a decadal trend. A model that
+    shares none of the findings' numeric tokens has written about something else, and on
+    an informational question that something else is invariably the verdict: a small
+    model handed a ``DO_NOT_ADVISE`` will restate the advisory and never mention the
+    fleet. That answer is safe and wrong, and the template — which splices the findings
+    in verbatim — is the better one, so the caller falls back to it.
+
+    Findings with no numbers at all cannot be checked this way and are not held against
+    the model.
+    """
+    wanted = set()
+    for f in findings:
+        wanted |= _number_tokens(f)
+    if not wanted:
+        return True
+    return bool(wanted & _number_tokens(text))
+
+
+def enforce_answer_contract(
+    text: str,
+    *,
+    verdict: Verdict | None,
+    language: str,
+    answer_kind: str,
+) -> tuple[str, list[str]]:
+    """Repair a model-written answer that dropped something it may not drop.
+
+    ``polish_answer`` guards the *editor* pass against losing the verdict wording or the
+    named handoff, by comparing its candidate to the text it was given. Nothing guarded
+    the **synthesis** pass the same way — so a model that answered the question and
+    forgot the handoff produced a ``DO_NOT_ADVISE`` answer with no human to call, which
+    is invariant 2 broken in the one place it matters most. The template path never had
+    this failure; the model path did, silently.
+
+    Repairs are additive and deterministic — a missing required sentence is appended from
+    the same copy the template would have used. Nothing is rewritten and nothing is
+    removed. Every repair is returned so it can be recorded on the answer rather than
+    hidden.
+    """
+    repairs: list[str] = []
+    if verdict is None or not text.strip():
+        return text, repairs
+
+    out = text.strip()
+    plain = _plain_verdict(verdict.level, language)
+
+    # 1. The verdict has to be said, in words. A model that answered the question and
+    #    never mentioned the advisory at all gets it appended.
+    if plain.lower() not in out.lower():
+        copy = VERDICT_COPY.get(verdict.level, VERDICT_COPY["DO_NOT_ADVISE"])
+        words = copy.get(language) or copy["en"]
+        out = " ".join(as_sentences([out, f"{plain}.", words["lead"]]))
+        repairs.append("verdict wording restored")
+
+    # 2. DO_NOT_ADVISE must hand off to a named human authority. Not negotiable, and not
+    #    left to the prompt: invariant 2 says the abstention names a place, never guesses.
+    if verdict.level == "DO_NOT_ADVISE" and verdict.handoff is not None:
+        h = verdict.handoff
+        if not handoff_present(out, h):
+            contact = f" ({h.contact})" if (h.contact and h.contact_verified) else ""
+            dist = f", {h.distance_nm:.1f} nm" if h.distance_nm is not None else ""
+            out = " ".join(
+                as_sentences(
+                    [out, f"{label('handoff', language)}: {h.authority_name}{contact}{dist}."]
+                )
+            )
+            repairs.append("named handoff restored")
+
+    # 3. On an informational answer the verdict is context, not the answer. A model that
+    #    opened with the bare headline ("Do not go. The vessels closest to ...") gets the
+    #    same framing label the template uses. Deterministic and purely a prefix — no word
+    #    of the model's own answer is touched.
+    if answer_kind == "INFORMATIONAL":
+        note = label("safety_note", language)
+        # Prefix match on the wording, not an exact "Do not go." — the model writes
+        # "Do not go out." and "Do not go today." just as readily, and all three open an
+        # answer to a question about vessels with what looks like a refusal to answer it.
+        if out.lower().startswith(plain.lower()) and not out.lower().startswith(
+            note.lower()
+        ):
+            out = f"{note} — {out}"
+            repairs.append("verdict reframed as context")
+
+    return out, repairs
+
+
 def compose(
     *,
     query_id: str,
@@ -488,8 +741,15 @@ def compose(
     route: Any = None,
     extras: Sequence[str] = (),
     analytical: bool = False,
+    answer_kind: str = "ADVISORY",
 ) -> AgentAnswer:
-    """Build the final answer. Template first, model second, audit last."""
+    """Build the final answer. Template first, model second, audit last.
+
+    ``answer_kind`` ("ADVISORY" | "INFORMATIONAL", decided deterministically by
+    ``planner.classify_answer_kind``) governs presentation on both the template and the
+    model path, and nothing else. The verdict, the ceiling and the evidence audit are
+    identical for both.
+    """
     region = region or load_region()
     observations: list[Observation] = []
     for r in tool_results:
@@ -500,17 +760,25 @@ def compose(
                 observations.append(obs)
 
     base = (
-        template_answer(verdict, language, region=region, extras=extras)
+        template_answer(
+            verdict, language, region=region, extras=extras, answer_kind=answer_kind
+        )
         if verdict
-        else " ".join(extras) or _no_verdict_text(language)
+        else " ".join(as_sentences(extras)) or _no_verdict_text(language)
     )
 
     text = base
     unsourced: list[str] = []
+    repairs: list[str] = []
 
     if runtime is not None and runtime.client.available and not _is_scripted(runtime):
-        system = SYNTHESIS_SYSTEM.format(language_name=language_name(language))
-        prompt = _synthesis_prompt(question, verdict, tool_results, language)
+        system = SYNTHESIS_SYSTEM.format(
+            language_name=language_name(language),
+            answer_kind_rule=ANSWER_KIND_RULES.get(
+                answer_kind, ANSWER_KIND_RULES["ADVISORY"]
+            ),
+        )
+        prompt = _synthesis_prompt(question, verdict, tool_results, language, answer_kind)
         result = runtime.run(
             "SynthesisAgent", system, prompt, tool_names=[], parent_id=None, max_tokens=1200
         )
@@ -519,7 +787,21 @@ def compose(
             # The model's prose only replaces the template if it survived the audit with
             # something substantial left. Otherwise the template stands.
             if cleaned and len(cleaned) >= 0.4 * len(result.text):
-                text = humanise_verdict_codes(cleaned, language)
+                if answer_kind == "INFORMATIONAL" and not answers_the_question(
+                    cleaned, extras
+                ):
+                    # It wrote about the verdict instead of the question. The template
+                    # carries the findings verbatim, so it is the better answer here.
+                    repairs.append("model did not answer the question; template used")
+                else:
+                    # Written by a model, so audited like one: the evidence audit above
+                    # catches an invented number, this catches a dropped invariant.
+                    text, repairs = enforce_answer_contract(
+                        humanise_verdict_codes(cleaned, language),
+                        verdict=verdict,
+                        language=language,
+                        answer_kind=answer_kind,
+                    )
             trace = list(trace) + list(result.steps)
 
     # Final editor pass. Runs on whatever produced `text` — model prose or the template —
@@ -541,6 +823,15 @@ def compose(
         if residual:
             text = pre_polish
             polish_note = {"applied": False, "reason": f"post-audit rejected: {residual}"}
+        else:
+            # The editor is allowed to reorder and rephrase, and it will happily drop the
+            # "safety note" framing or reword the handoff title out of recognition. Both
+            # are cheap to put back and expensive to lose, so the contract is re-enforced
+            # on whatever actually ships. Idempotent: a compliant rewrite is untouched.
+            text, post_repairs = enforce_answer_contract(
+                text, verdict=verdict, language=language, answer_kind=answer_kind
+            )
+            repairs.extend(r for r in post_repairs if r not in repairs)
 
     payloads = {r.tool: r.payload for r in tool_results if r.payload}
     return AgentAnswer(
@@ -561,11 +852,18 @@ def compose(
                 if verdict else None
             ),
             "template_text": base,
+            # What shape of question this was, so both UIs can render the verdict as the
+            # answer or as context without re-deriving the classification client-side.
+            "answer_kind": answer_kind,
             # What the reader would have seen without the editor pass, and whether that
             # pass ran. Staleness, downgrades and now rewrites are all surfaced, never
             # hidden — the console renders this next to the trace.
             "unpolished_text": pre_polish,
             "polish": polish_note,
+            # Invariants the model-written answer dropped and this layer put back. Empty
+            # on the template path and on a well-behaved model. Surfaced, never hidden —
+            # a repair is a thing the console should be able to show.
+            "contract_repairs": repairs,
         },
         unsourced_numbers=unsourced,
     )
@@ -621,11 +919,18 @@ def _synthesis_prompt(
     verdict: Verdict | None,
     tool_results: Sequence[ToolResult],
     language: str,
+    answer_kind: str = "ADVISORY",
 ) -> str:
     lines = [f"The question asked was: {question}", ""]
     if verdict:
+        role = (
+            "DECIDED VERDICT — safety context for this position and time, NOT the answer "
+            "to the question above (you cannot change it):"
+            if answer_kind == "INFORMATIONAL"
+            else "DECIDED VERDICT (you cannot change this):"
+        )
         lines += [
-            f"DECIDED VERDICT (you cannot change this): {verdict.level}",
+            f"{role} {verdict.level}",
             "Say it in these words, never as the code above: "
             f"\"{_plain_verdict(verdict.level, language)}\"",
             f"Reasons: {'; '.join(verdict.reasons) or '(none recorded)'}",
@@ -640,7 +945,8 @@ def _synthesis_prompt(
         if verdict.handoff:
             h = verdict.handoff
             lines.append(
-                f"Named handoff you must state: {h.authority_name}"
+                "Named handoff you must state, as a complete sentence telling the "
+                f"reader to contact it — never as a bare name: {h.authority_name}"
                 + (f" ({h.contact})" if (h.contact and h.contact_verified) else "")
             )
     lines += ["", "EVIDENCE — the complete set of numbers you may use:"]
@@ -657,16 +963,21 @@ def _synthesis_prompt(
                 + (", DERIVED" if p.is_derived else "")
                 + "]"
             )
-    lines += [
-        "",
-        f"Write the answer in {language_name(language)}. State the verdict first.",
-    ]
+    closing = (
+        "Answer the question that was asked, from that evidence. Place the verdict "
+        "sentence as instructed — it is context, not the answer."
+        if answer_kind == "INFORMATIONAL"
+        else "State the verdict first, then the reason."
+    )
+    lines += ["", f"Write the answer in {language_name(language)}. {closing}"]
     return "\n".join(lines)
 
 
 __all__ = [
-    "compose", "template_answer", "evidence_panel", "strip_unsourced",
-    "VERDICT_COPY", "LABELS", "label", "SYNTHESIS_SYSTEM", "EvidenceRow",
+    "compose", "template_answer", "evidence_panel", "strip_unsourced", "as_sentences",
+    "enforce_answer_contract", "answers_the_question", "handoff_present",
+    "VERDICT_COPY", "LABELS", "label", "SYNTHESIS_SYSTEM", "ANSWER_KIND_RULES",
+    "EvidenceRow",
     "humanise_verdict_codes", "normalise_prose", "polish_answer", "polish_is_safe",
     "POLISH_SYSTEM",
 ]

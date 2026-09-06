@@ -319,7 +319,7 @@ def _probe_source(
         "reporting a genuine gap (e.g. zero granules) is returned as a normal, named "
         "finding, never hidden or treated as a tool failure."
     ),
-    schema={"properties": {}, "required": []},
+    schema={"type": "object", "properties": {}},
     specialists=("MarineDataDiscovery",),
     reads_sources=(
         "imd_coastal_bulletin",

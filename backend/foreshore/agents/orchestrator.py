@@ -392,10 +392,16 @@ def answer(
         region=region,
         governing_ids=_governing_ids(observations),
         route=route,
-        extras=_extras(results),
+        extras=_extras(results, verdict),
         # The console is an analyst surface: its questions are analytical and its answers
-        # are allowed to run longer than the boat's four-sentence budget.
-        analytical=query.surface == "console",
+        # are allowed to run longer than the boat's four-sentence budget. An informational
+        # question earns the same room on either surface — it has a question to answer
+        # before it gets to the verdict.
+        analytical=query.surface == "console" or plan.answer_kind == "INFORMATIONAL",
+        # Decided in the planner, deterministically, from the utterance alone. Governs
+        # presentation only: the safety spine, the verdict and the ceiling are identical
+        # either way.
+        answer_kind=plan.answer_kind,
     )
 
     clear_evidence(query_id)
@@ -431,15 +437,41 @@ def _specialist_brief(question: str, language: str, plan_steps: Sequence[Any]) -
     return "\n".join(lines)
 
 
-def _extras(results: Sequence[ToolResult]) -> list[str]:
+#: Tools whose summary is a finding a reader wants stated. Plan order is preserved, and
+#: the planner puts the tools the question actually asked for ahead of the mandatory
+#: safety additions — so on an informational answer the first sentence is the answer.
+_EXTRA_TOOLS: tuple[str, ...] = (
+    "find_vessels_near_boundary", "find_nearest_pfz", "get_tide", "get_currents",
+    "check_geofences", "nearest_harbour", "plan_route", "get_lightning_nowcast",
+    "get_hazard_alerts", "get_productivity_history", "derive_pfz_zones",
+)
+
+
+def _extras(results: Sequence[ToolResult], verdict: Verdict | None = None) -> list[str]:
     """Sentences the template answer should carry even when no model runs.
 
     Only tool summaries — every number in them already came from an Observation.
+
+    ``nearest_harbour`` is dropped when the verdict is already going to print the same
+    landing centre as its named handoff. Both sentences are true, they name the same
+    place from the same record, and printing both put "Who to contact: Rameswaram Fishing
+    Harbour, 0.5 nm. ... Nearest landing centre: Rameshwaram Harbour, 0.5 nm away." in
+    one answer — the same fact twice, under two spellings. String deduplication cannot
+    catch that; knowing which block owns the handoff can.
     """
-    keep = ("find_nearest_pfz", "check_geofences", "nearest_harbour", "plan_route",
-            "get_lightning_nowcast", "get_hazard_alerts", "get_productivity_history",
-            "derive_pfz_zones")
-    return [r.summary for r in results if r.tool in keep and r.summary]
+    handoff_shown = (
+        verdict is not None
+        and verdict.level == "DO_NOT_ADVISE"
+        and verdict.handoff is not None
+    )
+    out: list[str] = []
+    for r in results:
+        if r.tool not in _EXTRA_TOOLS or not r.summary:
+            continue
+        if r.tool == "nearest_harbour" and handoff_shown:
+            continue
+        out.append(r.summary)
+    return out
 
 
 def _dedupe(items: Iterable[str]) -> list[str]:

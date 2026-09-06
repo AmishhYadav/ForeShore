@@ -95,6 +95,7 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
         role="Boundaries, zones, distances and the nearest safe harbour.",
         tools=(
             "find_nearest_pfz", "check_geofences", "get_exclusion_zones", "nearest_harbour",
+            "find_vessels_near_boundary",
         ),
         system=(
             "Geofence classes are not interchangeable. The 1974 India-Sri Lanka historic "
@@ -134,7 +135,10 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
     Specialist(
         name="VisualizationAgent",
         role="Decide what the map and panels should show for this answer.",
-        tools=("check_geofences", "get_exclusion_zones", "find_nearest_pfz"),
+        tools=(
+            "check_geofences", "get_exclusion_zones", "find_nearest_pfz",
+            "find_vessels_near_boundary",
+        ),
         system=(
             "Return layer choices and framing, not prose. Anything you surface must be "
             "traceable to a tool result already in evidence."
@@ -144,7 +148,10 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
     Specialist(
         name="ReportingAgent",
         role="Compose the operator-facing report for the shore console.",
-        tools=("get_governing_advisory", "get_hazard_alerts", "nearest_harbour"),
+        tools=(
+            "get_governing_advisory", "get_hazard_alerts", "nearest_harbour",
+            "find_vessels_near_boundary",
+        ),
         system=(
             "Write for a fisheries or Coast Guard operator: what is happening, which "
             "vessels are affected, what action is open to them, and what the evidence is."

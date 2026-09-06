@@ -1534,14 +1534,33 @@
 }
 
 .query-result__footer {
-  font-size: 12px;
-  color: var(--marine-on-surface-variant);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 16px;
-  opacity: 0.6;
 }
 
-.query-result__missing {
-  color: var(--verdict-caution);
+.query-result__footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.query-result__footer-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* ── Console Verdict Card (used in query results) ──────────────────────────── */
@@ -1568,6 +1587,32 @@
   line-height: 1.5;
 }
 
+/* Collapsed by default — the prose above already states the leading reason, this is
+   the escape hatch to the full list rather than a second copy of it. Same chevron
+   idiom as .trace-card__aux / .trace-card__raw below. */
+.verdict-card__reasons-details {
+  margin-top: 8px;
+}
+
+.verdict-card__reasons-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+  list-style: none;
+}
+
+.verdict-card__reasons-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.verdict-card__reasons-details > summary::before {
+  content: "▸ ";
+}
+
+.verdict-card__reasons-details[open] > summary::before {
+  content: "▾ ";
+}
+
 .verdict-card__handoff {
   font-size: 13px;
   color: var(--marine-on-surface-variant);
@@ -1575,6 +1620,107 @@
   padding: 8px 12px;
   background: rgba(217, 72, 63, 0.08);
   border-radius: var(--radius-md);
+}
+
+.verdict-card__handoff-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--marine-on-surface);
+}
+
+.verdict-card__handoff-type {
+  font-weight: 400;
+  color: var(--marine-on-surface-variant);
+}
+
+.verdict-card__handoff-meta {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.verdict-card__handoff-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.verdict-card__handoff-row dt {
+  flex: 0 0 auto;
+  min-width: 72px;
+  color: var(--marine-on-surface-variant);
+}
+
+.verdict-card__handoff-row dd {
+  margin: 0;
+  color: var(--marine-on-surface);
+}
+
+.verdict-card__handoff-row dd a {
+  color: var(--marine-aqua-bright);
+}
+
+/* Coast Guard 1554 — the one verified entry, always offered, set off from whatever else
+   is known about the named authority above it. */
+.verdict-card__handoff-row--cg {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.verdict-card__handoff-unverified {
+  font-size: 11px;
+  color: var(--verdict-caution);
+}
+
+/* ── Verdict Strip (informational answer_kind — context, not the answer) ─────────── */
+
+.verdict-strip {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.verdict-strip__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.verdict-strip__labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.verdict-strip__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--marine-on-surface);
+}
+
+.verdict-strip__note {
+  font-size: 10.5px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.verdict-strip__chip {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+}
+
+.verdict-strip .verdict-card__ceiling {
+  margin-top: 8px;
 }
 
 /* ── Evidence Table ────────────────────────────────────────────────────────── */
@@ -1619,6 +1765,44 @@
   font-size: 11px;
 }
 
+/* A governing row is the one the verdict actually rests on among several observations
+   of the same variable — same slim-rail idiom as .alert-row__rail, scoped to the row's
+   first cell since a table row's own border is unreliable under border-collapse. */
+.evidence-table__row--governs td:first-child {
+  border-left: 2px solid var(--marine-aqua-bright);
+}
+
+/* ── Evidence disclosure (collapses the whole table) ──────────────────────────── */
+
+.evidence-details {
+  margin-top: 16px;
+}
+
+.evidence-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--marine-on-surface-variant);
+  list-style: none;
+  padding: 4px 0;
+}
+
+.evidence-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.evidence-details > summary::before {
+  content: "▸ ";
+}
+
+.evidence-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.evidence-details .evidence-table-wrap {
+  margin-top: 10px;
+}
+
 /* ── Badge ─────────────────────────────────────────────────────────────────── */
 
 .badge {
@@ -1636,6 +1820,10 @@
   background: transparent !important;
   color: var(--marine-on-surface-variant);
   border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.badge--governs {
+  background: var(--marine-aqua-bright);
 }
 
 /* ── Trace Inspector ───────────────────────────────────────────────────────── */

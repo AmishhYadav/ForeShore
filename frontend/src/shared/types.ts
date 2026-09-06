@@ -138,6 +138,12 @@ export interface PlanStep {
 
 export interface Plan {
   steps: PlanStep[];
+  /** Distinguishes a safety verdict question ("is it safe to go out") from a
+   * factual/analytical one ("which vessels are closest to the IMBL"). The verdict is
+   * computed either way as safety context for the position and time, but it is only the
+   * answer to the question when this is "ADVISORY". Missing/undefined must be treated as
+   * "ADVISORY" — the safe default. */
+  answer_kind?: "ADVISORY" | "INFORMATIONAL";
 }
 
 /** One node of the stored reasoning trace — models.py's TraceStep.to_dict(). */

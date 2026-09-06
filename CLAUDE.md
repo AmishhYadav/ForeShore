@@ -288,12 +288,47 @@ Keep a second region file (`gujarat_sir_creek.yaml`) working purely to demonstra
   per-leg cost breakdown so the UI can explain *why* the route bends.
 - **Agent orchestration is hand-rolled** over Anthropic tool use — not LangChain/LangGraph.
   Full control of the stored trace, fewer unknowns, and it differentiates from the field.
-- `FORESHORE_LLM_PROVIDER` selects the wire format: `anthropic` (production) or `nvidia`
-  (free NIM catalogue at `integrate.api.nvidia.com`, OpenAI-compatible — used for testing
-  without API spend; `backend/foreshore/agents/runtime.py`'s `NvidiaNimClient` is the
-  adapter). Same `AgentRuntime` loop, same trace, same tool schemas either way — only the
-  request/response shape on the wire differs. No key for the selected provider still
-  degrades to `ScriptedClient`, same as always.
+- `FORESHORE_LLM_PROVIDER` selects the wire format: `anthropic` (production, native
+  shape), `gemini` or `nvidia`. The latter two are OpenAI-compatible and share one
+  adapter — `runtime.py`'s `OpenAICompatibleClient`, subclassed per provider for the base
+  URL, key env var and default model. Same `AgentRuntime` loop, same trace, same tool
+  schemas whichever answers; only the request/response shape on the wire differs. No key
+  for the selected provider still degrades to `ScriptedClient`, same as always.
+  Provider facts verified live, worth not rediscovering:
+  - `gemini-2.5-flash` is **retired for newly-issued keys** — 404 "no longer available to
+    new users", pointing at `gemini-3.6-flash`. That is the default.
+  - Gemini spends thinking tokens out of `max_tokens`, so answers came back cut off
+    mid-number. `GeminiClient.budget()` adds headroom. `reasoning_effort: "none"` is
+    rejected with a 400 by 3.6-flash; `minimal`/`low`/`medium`/`high` work.
+  - One FORESHORE query is several model calls (specialists + synthesis + polish), which
+    walks into Gemini's free-tier per-minute quota. NIM's free tier absorbs it.
+  - Tool `parameters` must carry `type: "object"`, and Gemini 400s on unknown JSON-Schema
+    keywords and on `required: []` — `_sanitise_schema` filters for the strictest
+    provider, which is harmless for the laxest.
+
+- **Answer kind.** `planner.classify_answer_kind` labels every utterance `ADVISORY` or
+  `INFORMATIONAL`, deterministically, from cue words alone: a decision cue wins outright,
+  then an information interrogative, and anything unclassifiable defaults to `ADVISORY`.
+  It governs **presentation only** — the safety spine, the verdict and the ceiling run
+  identically for both. `ADVISORY` leads with the verdict. `INFORMATIONAL` answers the
+  question, with the verdict attached as framed safety context (and its two-sentence lead
+  moved in front of the answer whenever the verdict is not `GO`). Without this, "which
+  vessels are closest to the IMBL?" was answered "Do not go." — a refusal-shaped reply to
+  a question that was never about going anywhere.
+
+- **The model path is audited like the template path.** `synthesis.enforce_answer_contract`
+  runs on model-written prose, after synthesis and again after polish: it restores a
+  dropped verdict sentence, restores a dropped named handoff (invariant 2), and reframes a
+  bare verdict opener on an informational answer. `answers_the_question` falls back to the
+  template when a model handed an informational question writes about the verdict instead
+  — checked on numeric-token overlap with the findings, because on this system the
+  substance of a finding is its numbers. Every repair is recorded on
+  `payloads.contract_repairs`, never hidden.
+
+- **Tool summaries are user-facing prose.** They are spliced verbatim into the answer, so
+  no `summary` may contain an enum code (`MPA`, `BREACH`, `DO_NOT_ADVISE`), an internal
+  tool name, an exception class, or a file path. Those belong on `error` or in `payload`
+  where the trace inspector shows them.
 - The answer text goes through a **final editor pass** (`agents/synthesis.py::polish_answer`)
   after the verdict, the evidence audit and the ceiling. It rewrites for readability only:
   any candidate that introduces a number, changes the verdict, drops the named handoff or

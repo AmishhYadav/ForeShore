@@ -402,7 +402,11 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
             chlorophyll_reason = "this basin/date is outside the published chlorophyll grid"
             chlorophyll_reason_detail += f" -- {_CHL_KNOWN_COVERAGE_NOTE}"
         else:
-            chlorophyll_reason = f"the chlorophyll grid could not be read ({type(exc).__name__})"
+            # The exception class name was reaching the answer text verbatim
+            # ("... could not be read (SourceError)"), which tells a fisherman nothing
+            # and tells a judge that a traceback leaked into the safety copy. The class
+            # and message stay in `chlorophyll_reason_detail` for the trace.
+            chlorophyll_reason = "the chlorophyll grid could not be read"
 
     # -- per-zone statistics + provenance --------------------------------------------
     records = _zone_records(
@@ -517,15 +521,23 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
     else:
         finding = "no SST front strong enough to clear the derivation threshold was found in the requested area"
 
+    # Reads as prose, not as a tool trace. The internal tool name used to appear here
+    # ("use find_nearest_pfz for that") — it is spliced verbatim into the answer a
+    # fisherman reads, and no reader of that answer can call a tool. The distinction it
+    # was drawing is the load-bearing part and stays, said in words.
     summary = (
-        "FORESHORE-derived, INDICATIVE fishing-zone estimate -- NOT the official "
-        "INCOIS PFZ advisory (use find_nearest_pfz for that) -- from the INCOIS OSF "
-        f"sea-surface-temperature run for file date {sst_gs.file_date.isoformat()}: {finding}"
+        "FORESHORE-derived, INDICATIVE fishing-zone estimate — this is FORESHORE's own "
+        "cross-check, not the official INCOIS Potential Fishing Zone advisory, which is "
+        "reported separately above. Computed from the INCOIS Ocean State Forecast "
+        f"sea-surface-temperature run for {sst_gs.file_date.isoformat()}: {finding}"
     )
     if chlorophyll_available:
-        summary += "; cross-checked against the INCOIS OSF chlorophyll field for the same date."
+        summary += "; cross-checked against the INCOIS chlorophyll field for the same date."
     else:
-        summary += f"; chlorophyll unavailable for this basin/date ({chlorophyll_reason}), derived on the SST front alone."
+        summary += (
+            f"; chlorophyll was unavailable for this area and date ({chlorophyll_reason}), "
+            "so the estimate rests on the sea-surface-temperature front alone."
+        )
     if when_note:
         summary += f" ({when_note})"
 

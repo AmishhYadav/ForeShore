@@ -29,6 +29,7 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from ..config import RegionConfig, env, is_fixture, load_region, mode
 from ..push.alerts import AlertStore
 from ..push.loop import PushLoop
+from ..push.vessels import set_fleet_provider
 
 log = logging.getLogger("foreshore.api.ws")
 
@@ -114,6 +115,9 @@ def start_push_loop_background(
     loop = PushLoop(region=region, tick_seconds=resolved_tick, alert_store=AlertStore())
 
     app.state.push_loop = loop
+    # The request path's fleet tool reads the same snapshot this loop advances, so a
+    # console question about vessel positions and the console's own map agree.
+    set_fleet_provider(loop.fleet_snapshot)
     app.state.alert_store = loop.alert_store
     app.state.ws_broadcaster = _Broadcaster(asyncio.get_event_loop())
     app.state.push_loop_region_id = region.region_id

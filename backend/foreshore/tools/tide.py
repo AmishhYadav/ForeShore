@@ -139,12 +139,19 @@ def get_tide(lat: float, lon: float, hours: int | None = None) -> ToolResult:
             ok=True,
             partial=True,
             missing=["openmeteo_marine"],
+            # The exception class and message go in the payload, not into a sentence a
+            # fisherman reads. "FixtureMissing: no fixture for source=... at
+            # /Users/.../data/fixtures/..." was reaching the answer text verbatim.
             summary=(
-                f"The Open-Meteo marine adapter could not be loaded ({type(exc).__name__}: "
-                f"{exc}); no tide window can be computed. Open-Meteo is the only keyless "
-                "tide source available for this coast, so this cannot fall back to another."
+                "The Open-Meteo marine adapter could not be loaded, so no tide window "
+                "can be computed. Open-Meteo is the only keyless tide source available "
+                "for this coast, so this cannot fall back to another."
             ),
-            payload={"hours": window_hours, "next_high": None, "next_low": None, "extrema": []},
+            error=f"{type(exc).__name__}: {exc}",
+            payload={
+                "hours": window_hours, "next_high": None, "next_low": None, "extrema": [],
+                "unavailable_detail": f"{type(exc).__name__}: {exc}",
+            },
         )
 
     try:
@@ -157,11 +164,15 @@ def get_tide(lat: float, lon: float, hours: int | None = None) -> ToolResult:
             partial=True,
             missing=["openmeteo_marine"],
             summary=(
-                f"get_tide could not reach Open-Meteo marine ({type(exc).__name__}: {exc}); "
-                "no tide window can be computed. Open-Meteo is the only keyless tide source "
-                "available for this coast."
+                "Open-Meteo marine could not be reached, so no tide window can be "
+                "computed. Open-Meteo is the only keyless tide source available for "
+                "this coast."
             ),
-            payload={"hours": window_hours, "next_high": None, "next_low": None, "extrema": []},
+            error=f"{type(exc).__name__}: {exc}",
+            payload={
+                "hours": window_hours, "next_high": None, "next_low": None, "extrema": [],
+                "unavailable_detail": f"{type(exc).__name__}: {exc}",
+            },
         )
 
     if not series:
@@ -268,9 +279,11 @@ def _build_currents_summary(
         summary += f" {governing_obs.provenance.source_name} governs the number for this coast."
 
     if unavailable:
-        summary += " Unavailable: " + "; ".join(
-            f"{sid} ({reason})" for sid, reason in unavailable.items()
-        ) + "."
+        # Which sources are missing, not the tracebacks explaining why. The reasons stay
+        # in payload["unavailable"] for the trace inspector; this sentence is spliced
+        # straight into the answer text, where an exception class and a fixture path are
+        # noise at best and alarming at worst.
+        summary += " Not available this run: " + ", ".join(sorted(unavailable)) + "."
 
     if when_note:
         summary += f" ({when_note})"

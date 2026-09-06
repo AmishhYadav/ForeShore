@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from ..config import RegionConfig, load_region
 from ..models import utcnow
@@ -25,6 +25,19 @@ from .language import detect, normalise
 from .specialists import specialist_for_tool
 
 Intent = str
+
+#: What shape of answer the utterance is asking for. Distinct from ``Intent``, which says
+#: *which data* is needed; this says *what the answer is*.
+#:
+#: ``ADVISORY``
+#:     The user is asking whether to put to sea. The verdict **is** the answer and leads.
+#: ``INFORMATIONAL``
+#:     The user is asking for a fact, a position, a count, a history or an explanation.
+#:     The safety spine still runs and the verdict is still computed and still shown —
+#:     it is never dropped — but it is *context for this position and time*, not the
+#:     answer. Leading with "Do not go." when the question was "which vessels are closest
+#:     to the IMBL" is a wrong answer, not a cautious one.
+AnswerKind = Literal["ADVISORY", "INFORMATIONAL"]
 
 #: Intent -> keyword cues, in every language we mirror. Matching is substring-based on a
 #: normalised string so it survives ASR mangling of surrounding words.
@@ -65,7 +78,38 @@ INTENT_CUES: dict[Intent, tuple[str, ...]] = {
         "what if", "instead of", "rather than", "compare", "leave at", "earlier", "later",
         "என்றால்", "pathilaga",
     ),
+    # A shore-console question about the tracked fleet rather than about the asker's own
+    # boat. Cues are deliberately plural or explicitly qualified: "is my boat safe" is a
+    # question about one boat's verdict, not a fleet query, and must not pull the fleet
+    # tool into the plan.
+    "fleet": (
+        "vessels", "boats", "ships", "trawlers", "fleet", "which vessel", "which boat",
+        "which ship", "how many boats", "how many vessels", "nearest vessel",
+        "closest vessel", "nearest boat", "closest boat", "படகுகள்", "padagugal",
+    ),
 }
+
+#: Cues that make an utterance a go/no-go question whatever else it contains. Checked
+#: before the information interrogatives below and they win outright: "what is the wave
+#: height, should I go?" is a decision, and the decision is what the reader needs first.
+#: Planning a passage is a decision too — a route question is somebody about to depart.
+DECISION_CUES: tuple[str, ...] = (
+    INTENT_CUES["safety_check"]
+    + INTENT_CUES["route"]
+    + INTENT_CUES["scenario"]
+    + ("put to sea", "set out", "head out", "depart", "sail", "venture out", "launch")
+)
+
+#: Interrogatives that ask for a fact, a position, a count or an explanation. Single
+#: ASCII words here are word-boundary matched by :func:`_cue_hits`, so "list" does not
+#: match "listen" and "show" does not match "should".
+INFORMATION_CUES: tuple[str, ...] = (
+    "what", "which", "where", "why", "who", "list", "show", "explain", "describe",
+    "how many", "how much", "how far", "how long", "how deep", "when is", "when does",
+    "tell me", "status of", "closest to", "nearest to",
+    "என்ன", "எங்கே", "ஏன்", "எத்தனை", "எப்போது", "யார்",
+    "enna", "enge", "ethanai", "eppo", "yaar",
+)
 
 #: Every plan starts here. The safety spine is not optional and the planner may not drop
 #: it, whatever the question was — a fisherman asking where the fish are still needs to
@@ -122,6 +166,9 @@ class Plan:
     lon: float
     when: datetime
     vessel_class: str | None = None
+    #: What shape of answer the question asked for. Drives presentation only — the
+    #: safety spine, the verdict and the ceiling run identically for both kinds.
+    answer_kind: AnswerKind = "ADVISORY"
     notes: list[str] = field(default_factory=list)
 
     def tools(self) -> list[str]:
@@ -139,6 +186,7 @@ class Plan:
             "text": self.text,
             "language": self.language,
             "intents": self.intents,
+            "answer_kind": self.answer_kind,
             "lat": self.lat,
             "lon": self.lon,
             "when": self.when.isoformat(),
@@ -177,6 +225,54 @@ def classify(text: str) -> list[Intent]:
     scored.sort(reverse=True)
     intents = [i for _, i in scored]
     return intents or ["safety_check"]
+
+
+def classify_answer_kind(text: str) -> AnswerKind:
+    """Is this a go/no-go question, or a question about the world?
+
+    Deterministic and safety-biased, in this order:
+
+    1. Any decision cue -> ``ADVISORY``. "Should I go", "is it safe", "plan me a route",
+       "what if I leave at 04:00" are all somebody deciding whether to put to sea.
+    2. Otherwise, any information interrogative -> ``INFORMATIONAL``.
+    3. Otherwise -> ``ADVISORY``.
+
+    Rule 3 is the point of the ordering. An utterance we cannot classify — mangled ASR,
+    a fragment, a language we do not mirror — gets the safety framing, because a verdict
+    offered to someone who did not ask for it costs a sentence, and an answer that buries
+    the verdict from someone who did could cost a boat.
+    """
+    t = normalise(text).lower()
+    if any(_cue_hits(t, cue) for cue in DECISION_CUES):
+        return "ADVISORY"
+    if any(_cue_hits(t, cue) for cue in INFORMATION_CUES):
+        return "INFORMATIONAL"
+    return "ADVISORY"
+
+
+#: Generic words -> the geofence class a fleet question is asking about. Class names, not
+#: place names: invariant 6 keeps region specifics out of application logic, so the
+#: mapping is over the vocabulary of the *classes* and works unchanged in Gujarat.
+_FLEET_CLASS_CUES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("cyclone", "hazard", "storm", "exclusion"), "HAZARD_EXCLUSION"),
+    (("coral", "seagrass", "mangrove", "sensitive", "habitat"), "ECO_SENSITIVE"),
+    (("park", "mpa", "marine national", "reserve", "sanctuary"), "MPA"),
+    (("imbl", "boundary", "border", "maritime line"), "IMBL"),
+)
+
+
+def fleet_geofence_class(text: str) -> str | None:
+    """Which boundary class a fleet question is measuring against, or ``None`` for all.
+
+    ``"IMBL"`` is the alias tool 17 understands for "both India-Sri Lanka boundary
+    classes" — the two remain distinct legal regimes downstream (invariant 5); this only
+    says which pair of fences to measure to.
+    """
+    t = normalise(text).lower()
+    for cues, gclass in _FLEET_CLASS_CUES:
+        if any(_cue_hits(t, cue) for cue in cues):
+            return gclass
+    return None
 
 
 def resolve_time(text: str, now: datetime | None = None) -> datetime:
@@ -267,6 +363,7 @@ def plan(
     when = when or resolve_time(text)
     lang = language or detect(text, candidates=region.languages)
     intents = classify(text)
+    answer_kind = classify_answer_kind(text)
     pos = {"lat": lat, "lon": lon}
 
     steps: list[PlanStep] = [
@@ -304,6 +401,13 @@ def plan(
                 "router treats them as impassable rather than merely expensive.",
                 {"when": when.isoformat()})
         elif intent == "geofence":
+            if "fleet" in intents:
+                # "Which vessels are closest to the IMBL" cues both intents, but the
+                # boundary word is qualifying the *fleet* question, not asking a second
+                # one about the asker's own position. Let tool 17 answer it and leave
+                # `check_geofences` to the mandatory safety add below, which still runs —
+                # it just stops pre-empting the answer the question actually asked for.
+                continue
             add("check_geofences",
                 "Compute distance, bearing and closing ETA to every boundary class from "
                 "this position and heading.",
@@ -329,6 +433,12 @@ def plan(
         elif intent == "harbour":
             add("nearest_harbour",
                 "Name the nearest landing centre, so any handoff is to a real place.", pos)
+        elif intent == "fleet":
+            add("find_vessels_near_boundary",
+                "Rank the tracked fleet by distance to the boundary class the question "
+                "names — the shore console's own question, answered from vessel "
+                "positions rather than from the asker's position.",
+                {"geofence_class": fleet_geofence_class(text), "limit": 5})
 
     # The safety spine always terminates in a verdict, and the verdict always knows where
     # to send someone if it abstains.
@@ -354,14 +464,19 @@ def plan(
         lon=lon,
         when=when,
         vessel_class=vessel_class,
+        answer_kind=answer_kind,
         notes=[
             "Plan built deterministically from intent cues; a language model may add "
             "steps but may not remove a safety step.",
+            f"Answer kind {answer_kind}: the safety spine and the verdict run either "
+            "way; this decides only whether the verdict leads the answer or trails it "
+            "as context for the position and time.",
         ],
     )
 
 
 __all__ = [
-    "Plan", "PlanStep", "plan", "classify", "resolve_time", "resolve_scenario_times",
-    "INTENT_CUES", "SAFETY_SPINE",
+    "Plan", "PlanStep", "plan", "classify", "classify_answer_kind", "resolve_time",
+    "resolve_scenario_times", "fleet_geofence_class", "AnswerKind",
+    "INTENT_CUES", "SAFETY_SPINE", "DECISION_CUES", "INFORMATION_CUES",
 ]

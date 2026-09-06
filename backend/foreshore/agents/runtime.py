@@ -45,6 +45,18 @@ DEFAULT_MODEL = "claude-sonnet-4-5"
 #: Tamil-fluent model.
 DEFAULT_NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+#: Google's Gemini, reached through its **OpenAI-compatible** surface rather than the
+#: native `generativelanguage` REST shape. Same reason the NIM client exists: the wire
+#: format is already implemented here, so a second provider costs a base URL and a key
+#: rather than a second adapter to keep in step with the first.
+#: gemini-2.5-flash is retired for keys issued after its deprecation — the API returns
+#: 404 "no longer available to new users" and names 3.6 as the replacement — so the
+#: default is the current Flash. `gemini-flash-latest` also resolves, but pinning an
+#: exact version keeps a demo reproducible when Google rolls the alias.
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
 MAX_TURNS = 8
 
 
@@ -133,20 +145,94 @@ class AnthropicClient(LLMClient):
         )
 
 
-class NvidiaNimClient(LLMClient):
-    """NVIDIA NIM (build.nvidia.com), free tier, for testing without Anthropic spend.
+#: Bounded, and deliberately short: one agent turn is several calls, and a long sleep
+#: would turn a rate limit into a demo that looks hung.
+_RETRY_AFTER_DEFAULT_S = 3.0
+_RETRY_AFTER_MAX_S = 20.0
 
-    NIM's ``integrate.api.nvidia.com`` endpoint is OpenAI-compatible, not Anthropic-
-    compatible — this class is the adapter, not a copy of :class:`AnthropicClient`. Same
-    interface (``system``, Anthropic-shaped ``messages`` in, one :class:`LLMTurn` out) so
-    :class:`AgentRuntime` does not know which wire format is underneath.
+
+def _retry_after_seconds(resp: httpx.Response) -> float:
+    """Honour ``Retry-After`` when the provider sends one, clamped."""
+    raw = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+    try:
+        return min(max(float(raw), 0.0), _RETRY_AFTER_MAX_S) if raw else _RETRY_AFTER_DEFAULT_S
+    except (TypeError, ValueError):
+        return _RETRY_AFTER_DEFAULT_S
+
+
+#: Long enough to name the cause, short enough to render as a chip in the console's
+#: "Unavailable:" row. The full body is never load-bearing — a failed model turn is
+#: evidence that did not get gathered, and the answer degrades on its own.
+_ERROR_CHARS = 160
+
+
+def _tidy(message: str) -> str:
+    """One line, capped. These strings surface in the console's `missing` list."""
+    flat = " ".join(str(message).split())
+    return flat if len(flat) <= _ERROR_CHARS else flat[: _ERROR_CHARS - 1].rstrip() + "…"
+
+
+def _provider_error(resp: httpx.Response) -> str:
+    """The provider's own error message, dug out of whichever envelope it used.
+
+    Gemini returns a *list* containing the error object; OpenAI and NIM return the object
+    directly. Anything unrecognised degrades to the truncated body rather than to a
+    parse failure inside an error path.
+    """
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return _tidy(resp.text or "")
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            return _tidy(err.get("message") or err)
+        if err:
+            return _tidy(err)
+    return _tidy(data)
+
+
+class OpenAICompatibleClient(LLMClient):
+    """One adapter for every provider that speaks the OpenAI chat-completions shape.
+
+    NVIDIA NIM and Google Gemini both publish an OpenAI-compatible endpoint, so neither
+    is Anthropic-shaped — this class is the adapter, not a copy of
+    :class:`AnthropicClient`. Same interface (``system``, Anthropic-shaped ``messages``
+    in, one :class:`LLMTurn` out) so :class:`AgentRuntime` does not know which wire
+    format is underneath, and adding a provider costs a base URL and a key env var
+    rather than a second conversion to keep in step with the first.
+
+    Subclasses supply ``base_url``, the key env var, the default model and — in
+    :meth:`extra_payload` — anything provider-specific.
     """
 
+    base_url: str = ""
+    key_env: str = ""
+    fallback_key_env: str | None = None
+    default_model: str = ""
+    provider: str = "openai-compatible"
+    timeout_s: float = 60.0
+
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.model = model or env("FORESHORE_LLM_MODEL", DEFAULT_NVIDIA_MODEL) or DEFAULT_NVIDIA_MODEL
-        self._key = api_key or env("NVIDIA_API_KEY")
-        self.name = f"nvidia:{self.model}"
+        self.model = (
+            model or env("FORESHORE_LLM_MODEL", self.default_model) or self.default_model
+        )
+        self._key = api_key or env(self.key_env) or (
+            env(self.fallback_key_env) if self.fallback_key_env else None
+        )
+        self.name = f"{self.provider}:{self.model}"
         self.available = bool(self._key)
+
+    def extra_payload(self) -> dict[str, Any]:
+        """Provider-specific request fields. Empty by default."""
+        return {}
+
+    def budget(self, max_tokens: int) -> int:
+        """The ``max_tokens`` actually sent. Identity unless the provider spends part of
+        the same budget on something the caller did not ask for."""
+        return max_tokens
 
     def turn(
         self,
@@ -158,28 +244,40 @@ class NvidiaNimClient(LLMClient):
         temperature: float = 0.0,
     ) -> LLMTurn:
         if not self._key:
-            raise RuntimeError("NVIDIA NIM client unavailable (no NVIDIA_API_KEY)")
+            raise RuntimeError(
+                f"{self.provider} client unavailable (no {self.key_env})"
+            )
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": _anthropic_messages_to_openai(system, messages),
-            "max_tokens": max_tokens,
+            "max_tokens": self.budget(max_tokens),
             "temperature": temperature,
         }
         if tools:
             payload["tools"] = [_anthropic_tool_to_openai(t) for t in tools]
             payload["tool_choice"] = "auto"
-        if self.model.startswith("nvidia/nemotron"):
-            # Nemotron reasoning models emit a "thinking" trace before the answer by
-            # default — extra latency and tokens per turn we don't want on the tool-call
-            # hot path. Off switch is a chat-template flag, not a normal API parameter.
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
-        resp = httpx.post(
-            NVIDIA_BASE_URL,
-            headers={"Authorization": f"Bearer {self._key}", "Accept": "application/json"},
-            json=payload,
-            timeout=60.0,
-        )
-        resp.raise_for_status()
+        payload.update(self.extra_payload())
+        headers = {"Authorization": f"Bearer {self._key}", "Accept": "application/json"}
+
+        resp = httpx.post(self.base_url, headers=headers, json=payload, timeout=self.timeout_s)
+        if resp.status_code == 429:
+            # Free-tier request-per-minute limits are the normal failure on these
+            # endpoints, and one agent turn makes several calls. A single bounded retry
+            # turns most of them into a slower answer instead of a lost specialist. The
+            # loop above already treats a failed turn as evidence-gathering that did not
+            # happen, so this is a quality save, never a correctness one.
+            time.sleep(_retry_after_seconds(resp))
+            resp = httpx.post(
+                self.base_url, headers=headers, json=payload, timeout=self.timeout_s
+            )
+        if resp.status_code >= 400:
+            # The provider's own message, not an HTTPStatusError with a link to MDN. This
+            # string reaches the console's `missing` list, so it has to say what actually
+            # went wrong ("model X is no longer available", "quota exceeded") rather than
+            # what HTTP 400 means in general.
+            raise RuntimeError(
+                f"{self.provider} HTTP {resp.status_code}: {_provider_error(resp)}"
+            )
         data = resp.json()
         message = data["choices"][0]["message"]
         text = (message.get("content") or "").strip()
@@ -190,7 +288,11 @@ class NvidiaNimClient(LLMClient):
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            calls.append({"id": tc["id"], "name": fn["name"], "input": args})
+            # Gemini omits `id` on tool calls in its OpenAI-compat responses; the loop
+            # needs one to pair the result back, so synthesise a stable local id rather
+            # than letting a KeyError sink the turn.
+            call_id = tc.get("id") or f"{fn['name']}_{len(calls)}"
+            calls.append({"id": call_id, "name": fn["name"], "input": args})
         finish = data["choices"][0].get("finish_reason") or "stop"
         stop_reason = {
             "tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens",
@@ -198,13 +300,112 @@ class NvidiaNimClient(LLMClient):
         return LLMTurn(text=text, tool_calls=calls, stop_reason=stop_reason, raw=data)
 
 
+class NvidiaNimClient(OpenAICompatibleClient):
+    """NVIDIA NIM (build.nvidia.com), free tier, for testing without Anthropic spend."""
+
+    base_url = NVIDIA_BASE_URL
+    key_env = "NVIDIA_API_KEY"
+    default_model = DEFAULT_NVIDIA_MODEL
+    provider = "nvidia"
+
+    def extra_payload(self) -> dict[str, Any]:
+        if self.model.startswith("nvidia/nemotron"):
+            # Nemotron reasoning models emit a "thinking" trace before the answer by
+            # default — extra latency and tokens per turn we don't want on the tool-call
+            # hot path. Off switch is a chat-template flag, not a normal API parameter.
+            return {"chat_template_kwargs": {"enable_thinking": False}}
+        return {}
+
+
+class GeminiClient(OpenAICompatibleClient):
+    """Google Gemini via its OpenAI-compatible endpoint.
+
+    ``GEMINI_API_KEY`` is the documented name; ``GOOGLE_API_KEY`` is accepted as a
+    fallback because that is what the Google SDKs read and it is the one people already
+    have exported.
+
+    Gemini models think before answering, and spend those tokens out of the same
+    ``max_tokens`` the prose comes from. ``FORESHORE_GEMINI_REASONING`` maps straight
+    onto the endpoint's ``reasoning_effort``; verified accepted on gemini-3.6-flash:
+    ``minimal`` | ``low`` | ``medium`` | ``high``. ``none`` is rejected with a 400 by
+    3.6-flash, so it is not the default. Unset means *send nothing* and take the model's
+    own default — a field a future API version rejects must not be able to break every
+    turn for a latency tweak nobody asked for.
+    """
+
+    base_url = GEMINI_BASE_URL
+    key_env = "GEMINI_API_KEY"
+    fallback_key_env = "GOOGLE_API_KEY"
+    default_model = DEFAULT_GEMINI_MODEL
+    provider = "gemini"
+
+    #: Thinking allowance added on top of the caller's prose budget. Gemini spends
+    #: thinking tokens out of ``max_tokens``, so a 1200-token synthesis budget was
+    #: producing answers cut off mid-number ("... FB-05 at 12.3.") — the model had spent
+    #: the budget reasoning before it wrote. The caller asks for prose room; this makes
+    #: sure that is what it gets.
+    THINKING_ALLOWANCE = 4096
+
+    def _effort(self) -> str:
+        return (env("FORESHORE_GEMINI_REASONING", "") or "").strip().lower()
+
+    def extra_payload(self) -> dict[str, Any]:
+        effort = self._effort()
+        return {"reasoning_effort": effort} if effort else {}
+
+    def budget(self, max_tokens: int) -> int:
+        return max_tokens if self._effort() == "none" else max_tokens + self.THINKING_ALLOWANCE
+
+
+#: JSON-Schema keywords the OpenAI-compatible providers accept in a function's
+#: ``parameters``. Gemini validates this strictly and 400s on anything else, so the
+#: schema is filtered rather than passed through — and filtering for the strictest
+#: provider is harmless for the laxest one.
+_ALLOWED_SCHEMA_KEYS: frozenset[str] = frozenset(
+    {
+        "type", "description", "properties", "required", "items", "enum",
+        "minimum", "maximum", "minItems", "maxItems", "format", "nullable",
+    }
+)
+
+
+def _sanitise_schema(node: Any) -> Any:
+    """Recursively drop schema keywords the strictest provider rejects.
+
+    Also drops an empty ``required: []`` — legal JSON Schema, and rejected by some
+    Gemini API versions.
+    """
+    if isinstance(node, list):
+        return [_sanitise_schema(v) for v in node]
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {k: _sanitise_schema(v) for k, v in value.items()}
+        elif key == "required":
+            if value:
+                out[key] = list(value)
+        elif key in _ALLOWED_SCHEMA_KEYS:
+            out[key] = _sanitise_schema(value)
+    return out
+
+
 def _anthropic_tool_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
+    parameters = _sanitise_schema(tool.get("input_schema") or {})
+    # `type: "object"` and a `properties` map are both mandatory on the OpenAI-compatible
+    # endpoints, and Gemini 400s without them. A registered tool that declares no
+    # arguments legitimately has an empty `properties` — that is a complete schema, and
+    # backfilling the two required keys here means one omission in one tool definition
+    # cannot take down every turn for every provider.
+    parameters.setdefault("type", "object")
+    parameters.setdefault("properties", {})
     return {
         "type": "function",
         "function": {
             "name": tool["name"],
             "description": tool.get("description", ""),
-            "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+            "parameters": parameters,
         },
     }
 
@@ -228,7 +429,9 @@ def _anthropic_messages_to_openai(
         if role == "assistant":
             text = "\n".join(b["text"] for b in content if b.get("type") == "text")
             tool_uses = [b for b in content if b.get("type") == "tool_use"]
-            entry: dict[str, Any] = {"role": "assistant", "content": text or None}
+            # Empty string, not null: an assistant turn that was pure tool calls has no
+            # prose, and Gemini's OpenAI-compat layer rejects a null `content`.
+            entry: dict[str, Any] = {"role": "assistant", "content": text or ""}
             if tool_uses:
                 entry["tool_calls"] = [
                     {
@@ -297,20 +500,28 @@ class ScriptedClient(LLMClient):
         return LLMTurn(text="", tool_calls=[], stop_reason="end_turn")
 
 
+#: ``FORESHORE_LLM_PROVIDER`` value -> client class. Add a provider here and it is live;
+#: an unknown value falls back to Anthropic, which then falls back to ScriptedClient if
+#: it has no key. There is no configuration that can leave the system without a client.
+PROVIDERS: dict[str, type[LLMClient]] = {
+    "anthropic": AnthropicClient,
+    "gemini": GeminiClient,
+    "google": GeminiClient,
+    "nvidia": NvidiaNimClient,
+}
+
+
 def make_client(api_key: str | None = None, model: str | None = None) -> LLMClient:
     """Real client for the configured provider, scripted otherwise. Never raises.
 
-    ``FORESHORE_LLM_PROVIDER`` picks the wire format (``anthropic`` default, or
-    ``nvidia`` for the free NIM catalogue used during testing). Missing/invalid key for
-    the selected provider degrades to :class:`ScriptedClient`, same as before — a live
-    demo cannot die on a missing key or dead endpoint.
+    ``FORESHORE_LLM_PROVIDER`` picks the wire format: ``anthropic`` (default, native
+    shape), ``gemini`` or ``nvidia`` (both OpenAI-compatible, one shared adapter).
+    Missing/invalid key for the selected provider degrades to :class:`ScriptedClient`,
+    same as before — a live demo cannot die on a missing key or dead endpoint.
     """
     provider = (env("FORESHORE_LLM_PROVIDER", "anthropic") or "anthropic").strip().lower()
-    client: LLMClient
-    if provider == "nvidia":
-        client = NvidiaNimClient(api_key=api_key, model=model)
-    else:
-        client = AnthropicClient(api_key=api_key, model=model)
+    factory = PROVIDERS.get(provider, AnthropicClient)
+    client = factory(api_key=api_key, model=model)
     return client if client.available else ScriptedClient()
 
 
@@ -623,8 +834,9 @@ def _evidence_block(results: Sequence[ToolResult]) -> str:
 
 
 __all__ = [
-    "AgentRuntime", "RunResult", "LLMClient", "LLMTurn", "AnthropicClient", "NvidiaNimClient",
+    "AgentRuntime", "RunResult", "LLMClient", "LLMTurn", "AnthropicClient",
+    "OpenAICompatibleClient", "NvidiaNimClient", "GeminiClient", "PROVIDERS",
     "ScriptedClient", "make_client", "check_unsourced_numbers", "NUMBER_TOKEN_RE",
     "DEFAULT_MODEL",
-    "DEFAULT_NVIDIA_MODEL", "MAX_TURNS",
+    "DEFAULT_NVIDIA_MODEL", "DEFAULT_GEMINI_MODEL", "MAX_TURNS",
 ]
