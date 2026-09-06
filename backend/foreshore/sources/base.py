@@ -138,8 +138,17 @@ class Source:
         retries: int = 2,
         cache_ttl_s: float | None = None,
         allow_stale_on_error: bool = True,
+        timeout_s: float | None = None,
     ) -> FetchResult:
-        """One fetch, honouring fixture mode, cache, retry and the header requirement."""
+        """One fetch, honouring fixture mode, cache, retry and the header requirement.
+
+        ``timeout_s`` overrides the shared client's 30 s budget for this call only. The
+        default suits a point query; it is not enough for a request that legitimately
+        returns a long series — a 23-year daily SST pull from ERDDAP is one round trip
+        that takes minutes, and timing it out three times with backoff turns a slow
+        answer into no answer. Raise it only for a request whose size is *known* and
+        bounded, never as a way to paper over a hanging endpoint.
+        """
         k = key or cache_store.key_for(url, params)
 
         if is_fixture():

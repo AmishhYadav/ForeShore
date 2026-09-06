@@ -33,6 +33,13 @@ Authority = Literal[
     "VLIZ",
     "GEBCO",
     "ISRO/NRSC",
+    #: NOAA NESDIS/NCEI, via the CoastWatch ERDDAP. Carries the only ocean-colour and
+    #: long-record SST fields that actually cover this coast: INCOIS's own `osf/chl`
+    #: grid is a Pacific Islands product (lon 130-215 E) and does not reach India, so
+    #: without this authority chlorophyll is simply unavailable here. Listed distinctly
+    #: rather than folded into "derived" because a judge is entitled to see which
+    #: government agency published each number.
+    "NOAA",
     "derived",
     "simulated",
 ]

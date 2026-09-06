@@ -61,7 +61,37 @@ INTENT_CUES: dict[Intent, tuple[str, ...]] = {
     ),
     "hazard": (
         "cyclone", "storm", "lightning", "thunder", "warning", "alert", "surge",
+        # "hazardous marine conditions" is the problem statement's own phrasing and
+        # matched none of the cues above, so the question that asks about hazards most
+        # directly was the one that planned no hazard tool. Every surface form is listed
+        # because `_cue_hits` word-boundary matches single ASCII words: "hazard" does not
+        # match "hazardous".
+        "hazard", "hazards", "hazardous", "dangerous", "rough sea", "bad weather",
         "புயல்", "மின்னல்", "எச்சரிக்கை", "puyal", "minnal", "toofan",
+    ),
+    # "Which regions show high chlorophyll concentration and favourable sea surface
+    # temperature?" — a PS bullet that previously matched no cue at all and fell through
+    # to the `safety_check` default, so the answer was a verdict and a geofence list.
+    # Distinct from `productivity`, which is the *decline* diagnostic over years: this
+    # one asks where the good water is now.
+    "ocean_productivity": (
+        "chlorophyll", "chlorophyl", "chlorophyll concentration", "plankton", "bloom",
+        "sea surface temperature", "sst", "water temperature", "warm water",
+        "productive waters", "feeding ground", "feeding grounds", "upwelling", "front",
+        "favourable", "favorable",
+        "பச்சையம்", "கடல்நீர் வெப்பநிலை", "chlorophyll alavu",
+    ),
+    # "Which fishing zones should be avoided due to hazardous marine conditions or
+    # geofencing restrictions?" — the avoid-list question. It used to classify as
+    # `fishing_zone` alone and plan the PFZ tools, answering where to *go* when it was
+    # asked where not to. Surface forms are listed individually for the same
+    # word-boundary reason as above: "restricted" does not match "restrictions".
+    "avoid_zone": (
+        "avoid", "avoids", "avoided", "avoiding", "keep out", "stay away", "stay clear",
+        "geofence", "geofences", "geofencing", "geofenced", "no-go", "off limits",
+        "restricted", "restriction", "restrictions", "prohibited", "banned",
+        "closed area", "not allowed", "should not enter",
+        "தவிர்", "தடை", "thavir", "thadai",
     ),
     "tide": (
         "tide", "high water", "low water", "current", "நீரோட்டம்", "அலை", "ambu",
@@ -107,6 +137,10 @@ INFORMATION_CUES: tuple[str, ...] = (
     "what", "which", "where", "why", "who", "list", "show", "explain", "describe",
     "how many", "how much", "how far", "how long", "how deep", "when is", "when does",
     "tell me", "status of", "closest to", "nearest to",
+    # Existence questions. "Are there any lightning or cyclone alerts in my area?" is a
+    # question about the world, and it was falling through to the ADVISORY default and
+    # being answered with "Do not go." before the alerts it asked about.
+    "are there", "is there", "any active", "do we have",
     "என்ன", "எங்கே", "ஏன்", "எத்தனை", "எப்போது", "யார்",
     "enna", "enge", "ethanai", "eppo", "yaar",
 )
@@ -373,6 +407,9 @@ def plan(
     ]
 
     seen = {s.tool for s in steps}
+    #: Notes the intent loop needs to add — currently only the "no destination to route
+    #: to" case. Collected here so they reach the Plan alongside the standing notes.
+    planning_notes: list[str] = []
 
     def add(tool: str, why: str, args: dict[str, Any], optional: bool = False) -> None:
         if tool in seen:
@@ -390,16 +427,37 @@ def plan(
                 "cross-check beside the official advisory. Labelled derived.",
                 {"bbox": list(region.bbox), "when": when.isoformat()}, optional=True)
         elif intent == "route":
-            dest = destination or (lat, lon)
-            add("plan_route",
-                "Run A* over the weighted cost field so the path is optimised against "
-                "wave, wind, current, depth and boundary proximity — never guessed.",
-                {"origin": [lat, lon], "destination": [dest[0], dest[1]],
-                 "departure": when.isoformat(), "vessel_class": vessel_class})
-            add("get_exclusion_zones",
-                "Collect cyclone polygons, high-wave cells and hard boundaries so the "
-                "router treats them as impassable rather than merely expensive.",
-                {"when": when.isoformat()})
+            # A route question rarely names its destination — "what is the safest route
+            # for a fishing vessel?" names none at all. This used to default the
+            # destination to the origin, so A* was asked to route a boat to where it
+            # already was and returned "0.0 nm over 0 leg(s)": the router had not run,
+            # and the answer said it had. Fall back to the region's nearest configured
+            # working ground instead, name it in the `why` so the substitution is visible
+            # in the trace and both UIs, and plan no route at all when the region
+            # declares none — an absent route is honest, a zero-length one is not.
+            ground = None if destination else region.default_destination(lat, lon)
+            dest = destination or ((ground.lat, ground.lon) if ground else None)
+            if dest is None:
+                planning_notes.append(
+                    "No destination was given and this region configures no working "
+                    "grounds, so no route was planned. A route needs somewhere to go."
+                )
+            else:
+                where = (
+                    "the destination given"
+                    if destination
+                    else f"{ground.name}, the nearest working ground this region configures"
+                )
+                add("plan_route",
+                    f"Run A* over the weighted cost field to {where}, so the path is "
+                    "optimised against wave, wind, current, depth and boundary proximity "
+                    "— never guessed.",
+                    {"origin": [lat, lon], "destination": [dest[0], dest[1]],
+                     "departure": when.isoformat(), "vessel_class": vessel_class})
+                add("get_exclusion_zones",
+                    "Collect cyclone polygons, high-wave cells and hard boundaries so the "
+                    "router treats them as impassable rather than merely expensive.",
+                    {"when": when.isoformat()})
         elif intent == "geofence":
             if "fleet" in intents:
                 # "Which vessels are closest to the IMBL" cues both intents, but the
@@ -433,6 +491,32 @@ def plan(
         elif intent == "harbour":
             add("nearest_harbour",
                 "Name the nearest landing centre, so any handoff is to a real place.", pos)
+        elif intent == "ocean_productivity":
+            add("find_productive_waters",
+                "Rank the productive water in this area on chlorophyll and sea surface "
+                "temperature together — the two signals INCOIS's own fishing-zone method "
+                "rests on — and place each zone by bearing and distance from port.",
+                {"bbox": list(region.bbox), "when": when.isoformat(),
+                 "lat": lat, "lon": lon})
+            add("derive_pfz_zones",
+                "Derive the indicative zones from the same fields, so the ranking above "
+                "can be seen against the fronts it came from. Labelled derived.",
+                {"bbox": list(region.bbox), "when": when.isoformat()}, optional=True)
+        elif intent == "avoid_zone":
+            add("get_exclusion_zones",
+                "Collect every area a boat must stay out of right now — cyclone "
+                "polygons, high-wave cells and the hard legal boundaries — as one list, "
+                "because that list is the answer to this question.",
+                {"when": when.isoformat()})
+            add("get_hazard_alerts",
+                "Pull the active cyclone and warning picture, so 'hazardous' is decided "
+                "by today's hazards rather than by what is usually true here.",
+                {"bbox": list(region.bbox)})
+            add("check_geofences",
+                "Measure this position against every boundary class, so the answer names "
+                "the restriction that actually applies here rather than reciting all of "
+                "them.",
+                {**pos, "heading_deg": heading_deg, "speed_kn": speed_kn})
         elif intent == "fleet":
             add("find_vessels_near_boundary",
                 "Rank the tracked fleet by distance to the boundary class the question "
@@ -471,6 +555,7 @@ def plan(
             f"Answer kind {answer_kind}: the safety spine and the verdict run either "
             "way; this decides only whether the verdict leads the answer or trails it "
             "as context for the position and time.",
+            *planning_notes,
         ],
     )
 

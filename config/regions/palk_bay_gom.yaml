@@ -29,6 +29,27 @@ anchor_ports:
     lon: 78.1348
     district: Thoothukudi
 
+# Named working grounds, used as the destination when a route question does not name
+# one ("what is the safest route for a fishing vessel?"). Operational endpoints chosen
+# for this coast, in the same class as anchor_ports — a fisheries office's choice, not a
+# measurement — which is why they live here and not in planner.py. Without them the
+# planner defaulted a route's destination to its own origin and A* returned a 0.0 nm
+# route, a router that never ran dressed up as an answer.
+#
+# The two chosen sit either side of Rameswaram so a route to them crosses the interesting
+# water: the Palk Bay ground lies north of the Pamban channel toward the 1974 historic-
+# waters line, the Gulf of Mannar ground south of it past the Marine National Park. Both
+# are inside the region bbox and in water the routing depth floor accepts.
+fishing_grounds:
+  - name: Palk Bay grounds north of Pamban
+    lat: 9.5200
+    lon: 79.3600
+    district: Ramanathapuram
+  - name: Gulf of Mannar grounds south of Rameswaram
+    lat: 8.9800
+    lon: 79.1200
+    district: Ramanathapuram
+
 districts: [Ramanathapuram, Pudukkottai, Thanjavur, Nagapattinam, Thoothukudi, Tirunelveli]
 
 sources:

@@ -129,6 +129,15 @@ class RegionConfig:
     #: region that never declares it can never leak a half-translated surface.
     surface_languages: tuple[str, ...]
     anchor_ports: tuple[Port, ...]
+    #: Named working grounds a boat from this coast actually goes to. These exist so a
+    #: route question that names no destination ("what is the safest route for a fishing
+    #: vessel?") can still be planned against a real endpoint instead of degenerating.
+    #: Before this, the planner defaulted the destination to the origin and A* returned
+    #: "0.0 nm over 0 legs" — a router that had not run, presented as a route.
+    #: Configured operational endpoints, in the same class as `anchor_ports`: they are
+    #: choices a fisheries office makes, not measurements, and they stay in config so
+    #: invariant 6 holds and a region swap moves them.
+    fishing_grounds: tuple[Port, ...]
     districts: tuple[str, ...]
     sources: dict[str, Any]
     coast_guard: dict[str, Any]
@@ -168,6 +177,20 @@ class RegionConfig:
         """District of the nearest anchor port. Districts themselves stay in config."""
         p = self.nearest_port(lat, lon)
         return p.district
+
+    def default_destination(self, lat: float, lon: float) -> Port | None:
+        """Where a route goes when the asker named no destination.
+
+        The nearest configured working ground — a real named place a boat from this coast
+        puts to sea for. Returns ``None`` when the region declares none, and the caller
+        must then decline to plan a route rather than invent an endpoint: a route to
+        nowhere is worse than no route, because it looks like an answer.
+        """
+        from .models import haversine_nm
+
+        if not self.fishing_grounds:
+            return None
+        return min(self.fishing_grounds, key=lambda g: haversine_nm(lat, lon, g.lat, g.lon))
 
     def source(self, key: str, default: Any = None) -> Any:
         return self.sources.get(key, default)
@@ -285,6 +308,10 @@ def load_region(region_id: str | None = None) -> RegionConfig:
         anchor_ports=tuple(
             Port(p["name"], float(p["lat"]), float(p["lon"]), p.get("district"))
             for p in d.get("anchor_ports", [])
+        ),
+        fishing_grounds=tuple(
+            Port(p["name"], float(p["lat"]), float(p["lon"]), p.get("district"))
+            for p in d.get("fishing_grounds", [])
         ),
         districts=tuple(d.get("districts", [])),
         sources=d.get("sources", {}),

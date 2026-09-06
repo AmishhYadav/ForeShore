@@ -26,6 +26,7 @@ from typing import Any, Sequence
 from ..config import RegionConfig, load_region
 from ..geofence.classes import (
     ALERT_RANK,
+    GEOFENCE_CLASSES,
     describe_classes,
     format_eta,
     region_layers,
@@ -217,7 +218,9 @@ def check_geofences(
 
     Returns ``ok=True, partial=True, missing=["static_geofence_layers"]`` — never a
     silent empty "clear" — when the static layers this check needs have not been
-    fetched by ``scripts/fetch_static.py``.
+    fetched by ``scripts/fetch_static.py``. (That path is for this docstring and for
+    developers reading the trace; it must never land in ``summary``, which is
+    user-facing prose — see the "cannot be computed yet" branch below.)
     """
     region = load_region()
     wanted_classes: list[GeofenceClass] | None = list(classes) if classes else None  # type: ignore[list-item]
@@ -250,9 +253,8 @@ def check_geofences(
             missing=["static_geofence_layers"],
             summary=(
                 "Geofence proximity cannot be computed yet: the static geofence layers "
-                "have not been fetched (run scripts/fetch_static.py), so no boundary can "
-                "be confirmed either clear or crossed. This is not a 'no fences nearby' "
-                "answer."
+                "this check needs have not been loaded, so no boundary can be confirmed "
+                "either clear or crossed. This is not a 'no fences nearby' answer."
             ),
             payload={
                 "proximities": [],
@@ -321,12 +323,17 @@ def check_geofences(
         # fence that gets fishermen arrested, and it must not be masked by an advisory
         # habitat layer that a flaky upstream refused to serve. Say exactly which
         # classes went unchecked, and say it louder when a legal boundary is one of them.
+        # Names, not enum codes or layer ids: `unchecked_classes` holds values like
+        # "IMBL_HISTORIC_WATERS" and `missing_layers` holds store ids like
+        # "imbl_historic_waters" — both internal, neither belongs in user-facing prose.
+        # The raw values still reach the caller via `payload["unchecked_classes"]` and
+        # `payload["missing_layers"]` for the trace inspector.
         note = (
             "Not all geofence classes could be checked: "
-            + ", ".join(unchecked_classes)
-            + f" (missing layers: {', '.join(missing_layers)}). "
+            + ", ".join(title_for(c, _summary_language(region)) for c in unchecked_classes)
+            + ". "
             + (
-                "A LEGAL boundary is among them, so this position cannot be declared "
+                "A legal boundary is among them, so this position cannot be declared "
                 "clear of the maritime boundary."
                 if unchecked_hard
                 else "The classes checked below are complete; the missing ones are advisory."
@@ -375,6 +382,63 @@ def _static_layer_provenance(store: VectorStore, layer_id: str) -> Provenance:
         acquired_at=acquired_at,
         issued_at=acquired_at,
     )
+
+
+def _mpa_names(region: RegionConfig) -> dict[str, str]:
+    """Vector-store layer id -> the MPA's own configured display name.
+
+    The name lives in the region config (invariant 6 — no boundary name in application
+    logic), keyed by the same ``mpa_<id>`` layer id :func:`region_layers` builds, so a
+    region swap re-homes the name along with the geometry.
+    """
+    return {
+        f"mpa_{mpa['id']}": mpa.get("name_en") or title_for("MPA", "en")
+        for mpa in (region.geofences or {}).get("mpa", []) or []
+    }
+
+
+def _exclusion_summary(
+    features: Sequence[dict[str, Any]], region: RegionConfig, lang: str
+) -> str:
+    """Human, class-distinct sentence for ``get_exclusion_zones`` — the tool-summary
+    equivalent of :func:`_proximity_sentence` above.
+
+    Groups every feature by its ``geofence_class`` (never one flattened "restricted
+    zone" — invariant 5) and names each class with :func:`title_for`, e.g. "1974
+    India-Sri Lanka historic waters boundary" rather than the raw store id
+    ``imbl_historic_waters`` those counts are keyed by in ``payload["counts"]``. An MPA
+    with a single configured name is named specifically (:func:`_mpa_names`); the raw
+    layer ids and hazard classes stay in ``payload`` for the trace inspector and never
+    reach this string.
+    """
+    class_counts: dict[str, int] = {}
+    mpa_layers: dict[str, int] = {}
+    for feat in features:
+        props = feat.get("properties") or {}
+        gclass = props.get("geofence_class")
+        if not gclass:
+            continue
+        class_counts[gclass] = class_counts.get(gclass, 0) + 1
+        if gclass == "MPA":
+            layer_id = str(props.get("hazard_class", ""))
+            mpa_layers[layer_id] = mpa_layers.get(layer_id, 0) + 1
+
+    if not class_counts:
+        return "No exclusion-zone features found from any source."
+
+    mpa_name_by_layer = _mpa_names(region)
+    bits: list[str] = []
+    for gclass in GEOFENCE_CLASSES:
+        n = class_counts.get(gclass, 0)
+        if n == 0:
+            continue
+        if gclass == "MPA" and len(mpa_layers) == 1:
+            (layer_id,) = mpa_layers
+            label = mpa_name_by_layer.get(layer_id, title_for(gclass, lang))
+        else:
+            label = title_for(gclass, lang)
+        bits.append(f"{label}: {n} {'zone' if n == 1 else 'zones'}")
+    return "Exclusion zones — " + "; ".join(bits) + "."
 
 
 @registry.tool(
@@ -476,8 +540,8 @@ def get_exclusion_zones(
         )
         if not polygons:
             notes.append(
-                "0 active GDACS cyclone exclusion polygons near this region — no current "
-                "tropical cyclone threatens this coast, a common valid outcome."
+                "0 active tropical-cyclone hazard exclusion zones near this region — no "
+                "current cyclone threatens this coast, a common valid outcome."
             )
     except Exception as exc:  # noqa: BLE001 — one source failing must not sink the tool
         sources_failed.append(f"gdacs_tc: {type(exc).__name__}: {exc}")
@@ -537,15 +601,17 @@ def get_exclusion_zones(
         except Exception as exc:  # noqa: BLE001
             sources_failed.append(f"{layer_id}: {type(exc).__name__}: {exc}")
 
-    summary_bits = [f"{k}: {v}" for k, v in sorted(counts.items())]
-    summary = (
-        ("Exclusion zones — " + "; ".join(summary_bits) + ".") if summary_bits else
-        "No exclusion-zone features found from any source."
-    )
+    # Human, class-distinct prose — never the raw layer ids/hazard classes `counts` is
+    # keyed by. Those stay below in `payload["counts"]`, which the trace inspector
+    # already shows (see `_exclusion_summary`'s docstring).
+    summary = _exclusion_summary(features, region, _summary_language(region))
     if notes:
         summary = summary + " " + " ".join(notes)
     if sources_failed:
-        summary = summary + f" ({len(sources_failed)} source(s) unavailable, see sources_failed.)"
+        summary = summary + (
+            f" ({len(sources_failed)} data source(s) unavailable for this check; "
+            "see the trace for detail.)"
+        )
 
     payload = {
         "features": features,

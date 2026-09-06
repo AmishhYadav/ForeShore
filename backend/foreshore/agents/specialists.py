@@ -78,15 +78,21 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
         role="Sea state, tide, currents, productivity and the derived PFZ cross-check.",
         tools=(
             "get_sea_state", "get_tide", "get_currents",
-            "derive_pfz_zones", "get_productivity_history",
+            "derive_pfz_zones", "get_productivity_history", "find_productive_waters",
         ),
         system=(
             "get_sea_state returns every source unreconciled. Present them side by side "
             "with their resolutions. The INCOIS Ocean State Forecast is an 11 km nest "
             "with data assimilation and governs the number; Open-Meteo is a ~28 km "
             "global model and is a cross-check. Never average them.\n"
-            "Zones from derive_pfz_zones are FORESHORE's own derivation and must be "
-            "labelled indicative, never presented as the INCOIS advisory."
+            "Zones from derive_pfz_zones and find_productive_waters are FORESHORE's own "
+            "derivation and must be labelled indicative, never presented as the INCOIS "
+            "advisory.\n"
+            "find_productive_waters answers 'where is the good water'; "
+            "get_productivity_history answers 'why has it got worse over the years'. "
+            "They read different records over different time depths — do not blend one "
+            "into the other, and never describe a closed satellite archive that ends in "
+            "2020 as current."
         ),
         ps_capability="ocean analytics",
     ),

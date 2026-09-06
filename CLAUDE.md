@@ -6,9 +6,17 @@ Operational context for Claude Code. Read this before touching anything.
 - Phased implementation plan with contracts, endpoints and demo script: `PLAN.md`
 - Phases 10–13 upgrade plan — PS gap closure and the NavIC downlink: `PLAN_V2.md`
 
-**Last verified against live sources: 2026-08-30.** Every endpoint below was probed directly,
+**Last verified against live sources: 2026-09-06.** Every endpoint below was probed directly,
 not taken from documentation. Re-run `scripts/healthcheck.py` each morning — operational
 endpoints move.
+
+> **Reachable is not usable.** The 2026-09-06 re-probe found two sources answering `200`
+> with content that cannot support the claim made from it: `PFZ_Automation:pfzlines` is
+> frozen at 2021, and `osf/chl` is a Pacific grid that has never covered India. The
+> healthcheck said `8/8 OK` throughout. Both are corrected in the table below, and the
+> healthcheck now checks currency and coverage, not just reachability. When a source looks
+> fine and the answer looks wrong, check what the layer actually *contains* before
+> anything else.
 
 ---
 
@@ -177,14 +185,17 @@ them you get 403. This is the single most common way to lose a day.
 | AWS observations | same GeoServer → `imd:aws_data_layer` |
 | Cyclone track | same GeoServer → `imd:Cyclone_Track_V` (0 features when no active cyclone — valid, not an error) |
 | Cyclone cone + wind polygons | `gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC`, then `/polygons/getgeometry?eventtype=TC&eventid=&episodeid=` → `Poly_Cones`, `Poly_Red/Orange/Green`, track LineStrings |
-| **Official PFZ advisory lines** | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
+| **Official PFZ advisory lines** — ⚠ frozen, see below | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
 | PFZ sectors | `PFZ_Sectors:sector_new` — `SOUTH TAMILNADU` = `SEC006` |
 | Landing centres (harbour handoff) | `PFZ_LandingCentres:LandingCenters_29Apr2024` — 541+ named, district + lat/lon |
 | Ecologically sensitive zones | `incois.gov.in/geoserver/MHW/ows` → `MHW:CORAL_REEF_DISS`, `MHW:SEAGRASS_ZONE_DISS`, `MHW:MANGROVE_ZONE_DISS` |
 | Harmful algal bloom | `ABIS:HABSectors` (includes `"Gulf of Manmar (GoM)"`) |
 | **Waves — authoritative model** | `incois.gov.in/thredds/dodsC/osf/wave/WAVES_coast_YYYYMMDD.nc` |
 | Maximum wave height | `osf/mwh/MWH_coast_YYYYMMDD.nc` → `MAXW` |
-| Currents / winds / SST / chlorophyll | `osf/currents/`, `osf/winds/`, `osf/sst/`, `osf/chl/` |
+| Currents / winds / SST | `osf/currents/`, `osf/winds/`, `osf/sst/` (**not** `osf/chl` — see below) |
+| **Chlorophyll now** | `coastwatch.pfeg.noaa.gov/erddap` → `nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily` (DINEOF gap-filled, 1/12°, ~3 d lag); cross-check `erdMH1chla1day_R2022NRT` (MODIS-Aqua, 1/24°) |
+| **Chlorophyll, decadal, ISRO sensor** | `erddap.incois.gov.in` → `incois_oceansat2_datasets` `CHL` — Oceansat-2 OCM, 2011-02-02→2020-05-01, closed archive, covers lat 0.1–27.9 / lon 46.7–99.3 |
+| **SST, decadal + published anomaly** | `coastwatch.pfeg.noaa.gov/erddap` → `ncdcOisst21Agg` (`sst`, `anom`), daily 0.25°, 1981→present |
 | THREDDS catalogue | `incois.gov.in/thredds/catalog/osf/<product>/catalog.xml` |
 | Subsurface T/S 2004→present | `erddap.incois.gov.in` → `incois_argo_10d_VAM` |
 | Tide, currents, cross-check waves | `marine-api.open-meteo.com/v1/marine` — `sea_level_height_msl`, `ocean_current_velocity/direction`, `wave_height`, `wind_wave_height`, `swell_wave_height`, `wave_period` |
@@ -203,8 +214,29 @@ source  Mww3 / ECMWF / With_Data_assimilation   (NetCDF history attribute)
 lag     ~2 days
 ```
 
-`osf/chl` is a VIIRS 4 km **3-day rolling composite** — INCOIS has already handled the optical
-cloud-gap problem. Do not rebuild it.
+### Two INCOIS layers that answer 200 and are still unusable here
+
+**`osf/chl` does not cover India.** It is a VIIRS 4 km 3-day rolling composite of the
+**Pacific Islands Countries** — the filenames say so
+(`VIIRS-SNPP-Roll-<start>-<end>-4KM-PICountries-CHL.nc`) and so does the grid:
+`lat -25.979 .. 18.021`, `lon 129.979 .. 215.021`. Palk Bay is 78–80.6°E. The NCSS `400`
+that `incois_thredds` fast-fails on is that miss, not a transient. Chlorophyll — one of
+the two signals INCOIS's own PFZ method rests on — was therefore never once available to
+this system, and `derive_pfz_zones` ran on SST alone from the day it was written while
+reporting itself as a two-signal product.
+Chlorophyll now comes from a fallback chain: INCOIS `osf/chl` first (it still wins in a
+basin that grid covers, which is why it stays first), then NOAA gap-filled VIIRS, then
+MODIS-Aqua. `payload["chlorophyll_source"]` names whichever answered.
+
+**`PFZ_Automation:pfzlines` is frozen at 2021.** 65 features nationally, every one
+`Year=2021, Julian_day=248` — 5 Sep 2021. `GetCapabilities` on that workspace shows no
+replacement layer. The WFS answers normally, so nothing errors; `find_nearest_pfz` used to
+report a five-year-old line in the present tense and a model then dropped the date
+entirely, which is invariant 4 breached by omission. It now checks the advisory's age
+against `PFZ_ADVISORY_MAX_AGE_DAYS` and, past that, returns `partial=True,
+missing=["incois_pfzlines_current"]` with a summary that leads with the age. The line is
+still shown — it is real and official — but never as an answer to "where is the zone
+today".
 
 ### Registration-gated (upside, not dependencies)
 
@@ -213,7 +245,12 @@ cloud-gap problem. Do not rebuild it.
   already reachable keyless.
 - **MOSDAC** — batch downloader, not a live API. Registration is a plain form, no documents.
   Never call it from inside an agent turn. Buys ISRO-product provenance (Oceansat-3 OCM,
-  INSAT SST); buys no capability that INCOIS does not already provide.
+  INSAT SST). **This is now worth more than it was.** The old note said it buys no
+  capability INCOIS does not already provide; that was written believing `osf/chl` covered
+  this coast. It does not, so today's chlorophyll comes from NOAA. Oceansat-3 OCM would put
+  *live* chlorophyll over Indian waters back on an ISRO instrument, which for a
+  Department-of-Space problem statement is the single best provenance upgrade available.
+  Still batch-only, so it would feed a scheduled ingest, never an agent turn.
 - **Bhashini** (`dhruva-api.bhashini.gov.in`) — Tamil ASR/TTS. Government of India language
   stack; same alignment argument as ISRO products.
 
@@ -395,6 +432,12 @@ Bhashini lands (open unknown 3).
 - Do not call MOSDAC synchronously from an agent.
 - Do not let the LLM emit a numeric value with no provenance record.
 - Do not present derived PFZ zones as the official INCOIS advisory.
+- Do not trust a `200` as evidence a source is usable. Check what the layer *contains* —
+  its dates and its extent — before building on it. Two sources passed the healthcheck for
+  weeks while being frozen and out-of-region respectively.
+- Do not plan a route to a destination nobody named by defaulting it to the origin. A
+  0.0 nm route is a router that did not run, presented as a route. Region config carries
+  `fishing_grounds`; with none configured, plan no route and say so.
 - Do not build the request path only — the push/alert loop is a scored requirement.
 - Do not collapse the geofence classes.
 - Do not hardcode region specifics.

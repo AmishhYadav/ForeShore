@@ -1,43 +1,65 @@
 """Tool 13 -- "why has fish productivity declined in this region?"
 
 The differentiator: a diagnostic no competing team's canned advisory chatbot attempts,
-because it requires reasoning over two genuinely different time depths honestly.
+because it requires reasoning over genuinely different time depths honestly.
 
-**The honesty constraint this module exists to enforce.** Two real INCOIS sources feed
-this diagnostic, and they must never be blurred together:
+**The honesty constraint this module exists to enforce, restated for the sources it now
+actually reads.** Three real sources feed this diagnostic and they must never be blurred
+together, averaged, or narrated past what they actually cover:
 
-* :class:`~foreshore.sources.incois_erddap.IncoisArgo` (``incois_argo_10d_VAM``) really
-  does span a long history -- its own ``MAX_TIMESERIES_SPAN_DAYS`` bounds one query to
-  ~9 years, and the live dataset's ``time_coverage_start`` is 2004-01-10 (see that
-  module's docstring). This is the one genuinely multi-year signal here: subsurface
-  temperature warming/cooling at depth.
-* :class:`~foreshore.sources.incois_thredds.IncoisThredds` ``chl``/``sst`` products are
-  **short rolling windows** -- CLAUDE.md documents chlorophyll as a 3-day rolling
-  composite and the OSF nest generally as a forward-looking ~7-day forecast product, not
-  an archive. ``catalog_dates(product)`` is asked, live, exactly how many dates the
-  server currently holds, and whatever comes back -- one date, three, however many -- is
-  what gets reported. This module never states a chlorophyll/SST time span it did not
-  actually retrieve, and never narrates a "recent trend" as if it were a multi-year
-  climate record.
+* :class:`~foreshore.sources.incois_erddap.IncoisArgo` (``incois_argo_10d_VAM``) --
+  subsurface temperature/salinity at depth, ``time_coverage_start`` 2004-01-10, its own
+  ``MAX_TIMESERIES_SPAN_DAYS`` bounds one query to ~9 years. Unchanged from this module's
+  first version: still the one signal that was never in question.
+* :class:`~foreshore.sources.incois_erddap.IncoisOceansat` (``incois_oceansat2_datasets``)
+  -- ISRO's own Oceansat-2 Ocean Colour Monitor, served from INCOIS's own ERDDAP.
+  **This replaces the old chlorophyll signal**, which read INCOIS's live ``osf/chl``
+  product (:class:`~foreshore.sources.incois_thredds.IncoisThredds`) and was *always*
+  empty here: that grid is a Pacific Islands Countries product, lon 129.98-215.02 E --
+  Palk Bay has never once been inside it, so this module answered a decadal question
+  with a single Argo number on every real run. Oceansat is a **closed archive**,
+  2011-02-02 to 2020-05-01 -- a real multi-year record, but a historical one that ends
+  in 2020 and will never grow. Every sentence this module writes about it says so
+  plainly and never calls it "recent" or "current". Falls back to NOAA MODIS-Aqua
+  (:class:`~foreshore.sources.oceancolour.OceanColour`, ``product="modis"``) only when
+  Oceansat itself is unreachable -- the two are never blended, and which one actually
+  answered is always named.
+* :class:`~foreshore.sources.oceancolour.OceanColour` ``sst_series`` (NOAA OISST v2.1,
+  ``ncdcOisst21Agg``) -- **this replaces the old SST signal**, which read INCOIS's
+  ``osf/sst`` product, a forward-looking ~7-day *forecast* nest with no history to take
+  a trend over -- structurally incapable of answering "why has it changed", not merely
+  unavailable. OISST is a genuine daily record back to the early 1980s and carries its
+  **own published anomaly** against its own 1971-2000 climatology, so this module
+  reports NOAA's own anomaly rather than computing one against a baseline FORESHORE
+  picked (CLAUDE.md: "do not average disagreeing sources" applies just as much to
+  "do not invent your own reference period when a published one exists").
 
 Every number this tool emits is a real :class:`~foreshore.models.Observation` with its
 own :class:`~foreshore.models.Provenance`, following ``pfz_derived.py``'s pattern: the
-*statistics* (a linear-trend slope, a recent-window delta) are FORESHORE's own derived
+*statistics* (a linear-trend slope, its own standard error) are FORESHORE's own derived
 diagnostic over raw retrieved series -- ``emits_derived=True``, every derived
-observation's ``Provenance.is_derived`` is ``True``, and the summary opens by naming
-this as FORESHORE's own diagnostic, never the official INCOIS advisory.
+observation's ``Provenance.is_derived`` is ``True`` -- while the SST anomaly is NOAA's
+own published field, carried through with ``is_derived=False``. The summary opens by
+naming this as FORESHORE's own diagnostic, never the official INCOIS/NOAA/ISRO advisory,
+and when two signals move in different directions it says so plainly rather than
+averaging them into one number.
 
-**Caching.** The Argo trend is expensive (a slow ERDDAP round-trip over a bounded but
-real time series) and, per the plan, does not meaningfully change day to day -- so it is
-computed once and cached via ``store/cache.py``'s existing generic snapshot mechanism
-under a dedicated ``productivity_trends`` bucket, reused for 30 days. The chlorophyll/
-SST recent-window read is cheap and is itself a live rolling window that changes daily,
-so it is recomputed fresh on every call and never cached.
+**Caching.** All three trends are expensive round-trips over genuinely static or
+near-static multi-year archives -- none of them meaningfully changes day to day -- so
+all three are computed once and cached via ``store/cache.py``'s existing generic
+snapshot mechanism, under the same ``productivity_trends`` bucket the Argo trend has
+always used, each under its own key (see ``_cache_key``/``_chl_trend_cache_key``/
+``_sst_trend_cache_key``). Every key is a function of latitude/longitude alone (plus,
+for Argo, the requested depth and span) -- never of "now" — for the same reason
+``test_incois_thredds_key.py`` exists: a key derived from the clock can never match on
+a later call, which silently and permanently drops a source from every cached lookup.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -51,26 +73,53 @@ from .registry import registry
 #: A computed Argo slope smaller than this (either sign) is reported as "stable" rather
 #: than warming/cooling -- deliberately small relative to the order-0.1-0.3 degC/decade
 #: multi-decadal ocean warming signals in the literature, so a noise-level slope from a
-#: short or gappy real series is not over-narrated as a trend.
+#: short or gappy real series is not over-narrated as a trend. Reused, unchanged, for the
+#: sea-surface temperature trend below: both are degC/decade quantities and there is no
+#: reason a shallower/deeper layer of the same water column should be held to a
+#: different noise standard.
 ARGO_STABLE_EPSILON_C_PER_DECADE = 0.05
 
-#: The Argo trend is a precomputed, cached diagnostic -- 30 days, per the plan: "the
-#: data is multi-year and does not change [day to day] ... that is honest and cheap."
-ARGO_TREND_CACHE_MAX_AGE_S = 30 * 86400.0
+#: All three trends are static-or-near-static multi-year archives, cached the same way
+#: for the same reason: the Argo trend originally documented this as "the data is
+#: multi-year and does not change [day to day] ... that is honest and cheap," and that
+#: reasoning holds identically for the Oceansat/MODIS chlorophyll archive and the OISST
+#: SST record now sitting beside it.
+TREND_CACHE_MAX_AGE_S = 30 * 86400.0
 
-#: ``store/cache.py`` bucket name for the cached Argo trend computation. Distinct from
+#: ``store/cache.py`` bucket shared by all three trend computations below. Distinct from
 #: any real source's ``source_id`` -- this is FORESHORE's own derived-statistic cache,
-#: not a source snapshot.
-ARGO_TREND_CACHE_SOURCE = "productivity_trends"
+#: not a source snapshot. Each signal gets its own key inside this one bucket (see the
+#: ``_..._cache_key`` helpers) rather than its own bucket, matching the pattern the Argo
+#: trend already established.
+PRODUCTIVITY_TREND_CACHE_SOURCE = "productivity_trends"
 
 _DEFAULT_REQUESTED_DEPTH_M = 5.0
 _DEFAULT_YEARS = 10
 
-#: real spatial resolutions of the underlying grids, used on the derived Provenance
-#: records below -- matches IncoisArgo.spatial_resolution_m / the incois_thredds.py
-#: PRODUCTS table, not invented constants.
+#: real spatial resolution of the Argo grid, used on its derived Provenance record below
+#: -- matches IncoisArgo.spatial_resolution_m, not an invented constant. The chlorophyll
+#: and SST derived Provenance records below instead read their resolution live off the
+#: retrieved Observations themselves (``Provenance.spatial_resolution_m``), since both
+#: adapters already compute that from the grid's own declared attributes.
 _ARGO_RESOLUTION_M = 111_000.0
-_PRODUCT_RESOLUTION_M = {"chl": 4_000.0, "sst": 9_260.0}
+
+#: Deliberately wider than either new archive really is, so this module never has to
+#: keep an exact archive boundary in sync with ``incois_erddap.py``/``oceancolour.py``.
+#: Both adapters clamp internally to their own real coverage (Oceansat to its closed
+#: 2011-02-02..2020-05-01 window, OISST to its own record) and flag the clamp on every
+#: returned Observation's ``qualifiers["time_range_clamped"]`` -- this module only has to
+#: ask for "everything you have" and then report, honestly, what actually came back.
+_WIDE_LOOKBACK_YEARS = 30.0
+
+#: Ordinary-language names for the three signals this tool can report or abstain on.
+#: Used to build the user-facing summary -- never splice an internal key like
+#: ``"chl_recent_trend"`` into prose (constraint 3: no `_`-joined internal identifiers
+#: in a tool's ``summary``).
+_SIGNAL_WORDS: dict[str, str] = {
+    "argo_subsurface_trend": "subsurface temperature",
+    "chlorophyll_trend": "chlorophyll",
+    "sst_trend": "sea-surface temperature",
+}
 
 
 def _bbox_centroid(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
@@ -93,33 +142,88 @@ def _cache_key(lat: float, lon: float, depth_m: float, years: int) -> str:
     return f"argo:{hashlib.sha1(blob.encode()).hexdigest()[:16]}"
 
 
-def _linear_trend_c_per_decade(times: list[datetime], values: list[float]) -> float | None:
-    """``numpy.polyfit`` degree-1 slope, converted from degC/day to degC/decade. ``None``
-    -- never a fabricated 0.0 -- when there are fewer than two distinct real timestamps
-    to fit a line through."""
-    if len(times) < 2:
-        return None
+def _chl_trend_cache_key(lat: float, lon: float) -> str:
+    """Deterministic in lat/lon alone -- no wall-clock instant, no ``years`` (the
+    chlorophyll trend always requests the full available archive; see
+    ``_WIDE_LOOKBACK_YEARS``), no marker for which product ultimately answered (Oceansat
+    vs. the MODIS fallback), so a fallback answer this run does not permanently shadow a
+    real Oceansat answer once it becomes reachable again -- each cache write records
+    which product it came from inside the payload, and the next successful write simply
+    replaces it, exactly like the Argo trend's own single-key/latest-wins pattern."""
+    blob = f"{lat:.3f}:{lon:.3f}"
+    return f"chl:{hashlib.sha1(blob.encode()).hexdigest()[:16]}"
+
+
+def _sst_trend_cache_key(lat: float, lon: float) -> str:
+    """Deterministic in lat/lon alone -- see ``_chl_trend_cache_key``."""
+    blob = f"{lat:.3f}:{lon:.3f}"
+    return f"sst:{hashlib.sha1(blob.encode()).hexdigest()[:16]}"
+
+
+@dataclass(frozen=True)
+class _TrendFit:
+    """Shared least-squares fit result. ``se_per_decade`` is only populated with >= 3
+    points (one residual degree of freedom); at 2 points a line is exact and has no
+    residual to estimate noise from, and below 2 there is no line at all."""
+
+    slope_per_decade: float | None
+    se_per_decade: float | None
+    n: int
+
+
+def _linear_trend_fit(times: list[datetime], values: list[float]) -> _TrendFit:
+    """The one place slope-per-decade arithmetic lives in this module -- Argo subsurface
+    temperature, chlorophyll and sea-surface temperature all go through this single
+    routine rather than three separate copies of the same ``numpy.polyfit`` call.
+
+    ``numpy.polyfit`` degree-1 slope, converted from <unit>/day to <unit>/decade (the
+    caller's values are whatever unit they are -- degC, mg/m^3 -- this function is
+    unit-agnostic). Also returns the fitted slope's own standard error, in the same
+    per-decade unit, wherever there are enough points to estimate one: this is what lets
+    a caller build a noise floor from the data's own scatter instead of an invented round
+    number (see ``get_productivity_history``'s chlorophyll noise-floor comment).
+    ``slope_per_decade`` is ``None`` -- never a fabricated 0.0 -- when there are fewer
+    than two distinct real timestamps to fit a line through.
+    """
+    n = len(times)
+    if n < 2:
+        return _TrendFit(None, None, n)
     t0 = min(times)
     xs = np.array([(t - t0).total_seconds() / 86400.0 for t in times], dtype=float)
     ys = np.array(values, dtype=float)
     if np.allclose(xs, xs[0]):
-        return None
-    slope_per_day, _intercept = np.polyfit(xs, ys, 1)
-    return float(slope_per_day) * 365.25 * 10.0
+        return _TrendFit(None, None, n)
+    slope_per_day, intercept = np.polyfit(xs, ys, 1)
+    slope_per_decade = float(slope_per_day) * 365.25 * 10.0
+    se_per_decade: float | None = None
+    if n >= 3:
+        dof = n - 2
+        sxx = float(np.sum((xs - xs.mean()) ** 2))
+        if dof > 0 and sxx > 0:
+            residuals = ys - (slope_per_day * xs + intercept)
+            residual_var = float(np.sum(residuals ** 2) / dof)
+            se_per_day = math.sqrt(residual_var / sxx)
+            se_per_decade = se_per_day * 365.25 * 10.0
+    return _TrendFit(slope_per_decade, se_per_decade, n)
 
 
-def _direction_label(slope_c_per_decade: float | None) -> str:
-    if slope_c_per_decade is None:
+def _direction_label(
+    slope: float | None, epsilon: float, *, rising: str = "warming", falling: str = "cooling"
+) -> str:
+    """``slope`` beyond +/- ``epsilon`` is ``rising``/``falling``; inside it, "stable";
+    ``None`` -- insufficient real data to fit any line -- is reported as such, never as
+    "stable" (a slope that could not be computed is not evidence of no change)."""
+    if slope is None:
         return "insufficient_data"
-    if slope_c_per_decade > ARGO_STABLE_EPSILON_C_PER_DECADE:
-        return "warming"
-    if slope_c_per_decade < -ARGO_STABLE_EPSILON_C_PER_DECADE:
-        return "cooling"
+    if slope > epsilon:
+        return rising
+    if slope < -epsilon:
+        return falling
     return "stable"
 
 
 # ----------------------------------------------------------------------------------
-# Signal 1: Argo subsurface trend -- genuinely multi-year, cached.
+# Signal 1: Argo subsurface trend -- genuinely multi-year, cached. Unchanged logic.
 # ----------------------------------------------------------------------------------
 
 
@@ -142,7 +246,7 @@ def _compute_argo_trend(region: Any, lat: float, lon: float, years: int) -> tupl
         pass
 
     cache_key = _cache_key(lat, lon, depth_m, years)
-    cached = read_latest_cache(ARGO_TREND_CACHE_SOURCE, cache_key, ARGO_TREND_CACHE_MAX_AGE_S)
+    cached = read_latest_cache(PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, TREND_CACHE_MAX_AGE_S)
     if cached is not None and isinstance(cached.payload, dict) and cached.payload.get("status") == "ok":
         return cached.payload, None
 
@@ -163,7 +267,8 @@ def _compute_argo_trend(region: Any, lat: float, lon: float, years: int) -> tupl
 
     times = [o.valid_time for o in temp_obs]
     values = [float(o.value) for o in temp_obs]
-    slope = _linear_trend_c_per_decade(times, values)
+    fit = _linear_trend_fit(times, values)
+    slope = fit.slope_per_decade
     obs_start, obs_end = times[0], times[-1]
 
     result: dict[str, Any] = {
@@ -173,7 +278,7 @@ def _compute_argo_trend(region: Any, lat: float, lon: float, years: int) -> tupl
         "clamped_by_source": requested_days > MAX_TIMESERIES_SPAN_DAYS,
         "n_points": len(temp_obs),
         "slope_c_per_decade": slope,
-        "direction": _direction_label(slope),
+        "direction": _direction_label(slope, ARGO_STABLE_EPSILON_C_PER_DECADE),
         "mean_temp_degc": float(np.mean(values)),
         "obs_start": obs_start.isoformat(),
         "obs_end": obs_end.isoformat(),
@@ -184,91 +289,161 @@ def _compute_argo_trend(region: Any, lat: float, lon: float, years: int) -> tupl
         "series": [{"t": t.isoformat(), "v": v} for t, v in zip(times, values)],
     }
     write_snapshot(
-        ARGO_TREND_CACHE_SOURCE, cache_key, result["source_url"], result,
+        PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, result["source_url"], result,
         {"depth_m": depth_m, "years": years, "lat": lat, "lon": lon},
     )
     return result, None
 
 
 # ----------------------------------------------------------------------------------
-# Signals 2/3: chlorophyll + SST recent rolling-window indicator -- never cached.
+# Signal 2: chlorophyll -- ISRO Oceansat-2 archive (2011-2020), NOAA MODIS fallback.
 # ----------------------------------------------------------------------------------
 
 
-def _compute_recent_window_trend(thredds: Any, product: str, lat: float, lon: float) -> tuple[dict[str, Any] | None, str | None]:
-    """Reads *every real date* ``catalog_dates(product)`` actually reports right now --
-    could be one, could be several -- and computes a first-vs-last delta (>=2 points) or
-    a linear fit (>=3 points) over exactly that real span. Never fabricates a trend from
-    a single point; that case is reported back for the caller to label as a single
-    reading, not a trend."""
-    try:
-        from ..sources.incois_thredds import PRODUCT_CANONICAL_VARS
-        from ..sources.incois_thredds import UNITS as THREDDS_UNITS
-    except Exception as exc:  # noqa: BLE001
-        return None, f"incois_thredds adapter unavailable: {type(exc).__name__}: {exc}"
-
-    try:
-        dates = sorted(thredds.catalog_dates(product))
-    except Exception as exc:  # noqa: BLE001
-        return None, f"{type(exc).__name__}: {exc}"
-    if not dates:
-        return None, f"no catalogue dates discovered for {product!r}"
-
-    canonical_var = PRODUCT_CANONICAL_VARS[product][0]
-    points: list[tuple[Any, float, Observation]] = []
-    last_error: str | None = None
-    for d in dates:
-        at = datetime(d.year, d.month, d.day, tzinfo=UTC)
-        try:
-            obs_list = thredds.point(product, lat, lon, at=at)
-        except Exception as exc:  # noqa: BLE001 -- one bad date must not sink the rest
-            last_error = f"{type(exc).__name__}: {exc}"
-            continue
-        match = next((o for o in obs_list if o.variable == canonical_var and o.is_numeric), None)
-        if match is not None:
-            points.append((d, float(match.value), match))
-
-    if not points:
-        reason = last_error or f"no valid (non-fill) {canonical_var} value at this point on any cataloged date"
-        return None, reason
-
-    points.sort(key=lambda p: p[0])
-    dates_used = [p[0] for p in points]
-    values = [p[1] for p in points]
-    sample_obs = [p[2] for p in points]
-
-    if len(points) == 1:
-        method, delta = "single_point", None
-    elif len(points) == 2:
-        method, delta = "first_vs_last", values[-1] - values[0]
-    else:
-        t0 = dates_used[0]
-        xs = np.array([(d - t0).days for d in dates_used], dtype=float)
-        ys = np.array(values, dtype=float)
-        if np.allclose(xs, xs[0]):
-            method, delta = "first_vs_last", values[-1] - values[0]
-        else:
-            slope_per_day, _b = np.polyfit(xs, ys, 1)
-            method = "linear_fit"
-            delta = float(slope_per_day) * float(xs[-1] - xs[0])
-
+def _fit_chlorophyll_series(obs: list[Observation]) -> dict[str, Any] | None:
+    """Shapes a ``chlorophyll_a`` Observation series from either adapter (both
+    :class:`IncoisOceansat` and :class:`OceanColour` already emit
+    ``variable="chlorophyll_a"``, ``unit="mg/m^3"``) into the trend dict this module
+    caches and reports. Returns ``None`` when every value at this point is missing
+    (all-NaN), never a fabricated trend."""
+    numeric = sorted(
+        (o for o in obs if o.variable == "chlorophyll_a" and o.is_numeric),
+        key=lambda o: o.valid_time,
+    )
+    if not numeric:
+        return None
+    times = [o.valid_time for o in numeric]
+    values = [float(o.value) for o in numeric]
+    fit = _linear_trend_fit(times, values)
+    last = numeric[-1]
     return {
         "status": "ok",
-        "product": product,
-        "canonical_var": canonical_var,
-        "unit": THREDDS_UNITS[canonical_var],
-        "n_points": len(points),
-        "method": method,
-        "delta": delta,
-        "first_value": values[0],
-        "last_value": values[-1],
-        "date_start": dates_used[0].isoformat(),
-        "date_end": dates_used[-1].isoformat(),
-        "span_days": (dates_used[-1] - dates_used[0]).days,
-        "series": [{"date": d.isoformat(), "v": v} for d, v in zip(dates_used, values)],
-        "provenance_url": sample_obs[-1].provenance.url,
-        "provenance_acquired_at": sample_obs[-1].provenance.acquired_at.isoformat(),
-    }, None
+        "n_points": len(numeric),
+        "slope_mg_m3_per_decade": fit.slope_per_decade,
+        "se_mg_m3_per_decade": fit.se_per_decade,
+        "mean_mg_m3": float(np.mean(values)),
+        "obs_start": times[0].isoformat(),
+        "obs_end": times[-1].isoformat(),
+        "time_range_clamped": any(bool(o.qualifiers.get("time_range_clamped")) for o in numeric),
+        "source_id": last.provenance.source_id,
+        "source_name": last.provenance.source_name,
+        "authority": last.provenance.authority,
+        "source_url": last.provenance.url,
+        "spatial_resolution_m": last.provenance.spatial_resolution_m,
+        "grid_lat": last.qualifiers.get("grid_lat", last.lat),
+        "grid_lon": last.qualifiers.get("grid_lon", last.lon),
+    }
+
+
+def _compute_chl_trend(region: Any, lat: float, lon: float) -> tuple[dict[str, Any] | None, str | None]:
+    """Chlorophyll multi-year trend. Prefers ISRO's own Oceansat-2 archive -- better
+    provenance for a problem statement filed by ISRO/Department of Space than the NOAA
+    fallback this codebase also carries, and it is the one product that actually covers
+    this coast (INCOIS's own live ``osf/chl`` never has). Falls back to NOAA MODIS-Aqua
+    only when Oceansat itself is unreachable; the two are never blended, and the reason
+    each attempt failed is kept (in ordinary words, joined with ``; ``) for the caller to
+    report if both fail. Never raises."""
+    cache_key = _chl_trend_cache_key(lat, lon)
+    cached = read_latest_cache(PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, TREND_CACHE_MAX_AGE_S)
+    if cached is not None and isinstance(cached.payload, dict) and cached.payload.get("status") == "ok":
+        return cached.payload, None
+
+    now = utcnow()
+    wide_start = now - timedelta(days=365.25 * _WIDE_LOOKBACK_YEARS)
+    errors: list[str] = []
+    trend: dict[str, Any] | None = None
+
+    try:
+        from ..sources.incois_erddap import IncoisOceansat
+        oceansat = IncoisOceansat(region=region)
+        obs = oceansat.chlorophyll_series(lat, lon, start=wide_start, end=now)
+        trend = _fit_chlorophyll_series(obs)
+        if trend is None:
+            raise ValueError("no non-missing chlorophyll-a values at this point")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"the ISRO Oceansat-2 archive ({type(exc).__name__}: {exc})")
+
+    if trend is None:
+        try:
+            from ..sources.oceancolour import OceanColour
+            ocean_colour = OceanColour(region=region)
+            obs = ocean_colour.chlorophyll_series(lat, lon, start=wide_start, end=now, product="modis")
+            trend = _fit_chlorophyll_series(obs)
+            if trend is None:
+                raise ValueError("no non-missing chlorophyll-a values at this point")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"the NOAA MODIS fallback ({type(exc).__name__}: {exc})")
+            return None, "; ".join(errors)
+
+    write_snapshot(
+        PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, trend["source_url"], trend, {"lat": lat, "lon": lon},
+    )
+    return trend, None
+
+
+# ----------------------------------------------------------------------------------
+# Signal 3: sea-surface temperature -- NOAA OISST v2.1, plus its own published anomaly.
+# ----------------------------------------------------------------------------------
+
+
+def _compute_sst_trend(region: Any, lat: float, lon: float) -> tuple[dict[str, Any] | None, str | None]:
+    """Sea-surface temperature multi-year trend plus OISST's own published anomaly
+    (``ncdcOisst21Agg`` via :class:`OceanColour`). The anomaly is the dataset's own
+    field against its own climatology -- this module never derives one itself. Never
+    raises."""
+    cache_key = _sst_trend_cache_key(lat, lon)
+    cached = read_latest_cache(PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, TREND_CACHE_MAX_AGE_S)
+    if cached is not None and isinstance(cached.payload, dict) and cached.payload.get("status") == "ok":
+        return cached.payload, None
+
+    now = utcnow()
+    wide_start = now - timedelta(days=365.25 * _WIDE_LOOKBACK_YEARS)
+    try:
+        from ..sources.oceancolour import OceanColour
+        ocean_colour = OceanColour(region=region)
+        obs = ocean_colour.sst_series(lat, lon, start=wide_start, end=now)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+
+    temp_obs = sorted(
+        (o for o in obs if o.variable == "sea_surface_temperature" and o.is_numeric),
+        key=lambda o: o.valid_time,
+    )
+    anomaly_obs = sorted(
+        (o for o in obs if o.variable == "sea_surface_temperature_anomaly" and o.is_numeric),
+        key=lambda o: o.valid_time,
+    )
+    if not temp_obs:
+        return None, "no non-missing sea-surface temperature values at this point"
+
+    times = [o.valid_time for o in temp_obs]
+    values = [float(o.value) for o in temp_obs]
+    fit = _linear_trend_fit(times, values)
+    last = temp_obs[-1]
+    last_anomaly = anomaly_obs[-1] if anomaly_obs else None
+
+    result: dict[str, Any] = {
+        "status": "ok",
+        "n_points": len(temp_obs),
+        "slope_c_per_decade": fit.slope_per_decade,
+        "mean_temp_degc": float(np.mean(values)),
+        "obs_start": times[0].isoformat(),
+        "obs_end": times[-1].isoformat(),
+        "time_range_clamped": any(bool(o.qualifiers.get("time_range_clamped")) for o in temp_obs),
+        "source_id": last.provenance.source_id,
+        "source_name": last.provenance.source_name,
+        "authority": last.provenance.authority,
+        "source_url": last.provenance.url,
+        "spatial_resolution_m": last.provenance.spatial_resolution_m,
+        "grid_lat": last.qualifiers.get("grid_lat", last.lat),
+        "grid_lon": last.qualifiers.get("grid_lon", last.lon),
+        "latest_anomaly_degc": (float(last_anomaly.value) if last_anomaly is not None else None),
+        "latest_anomaly_time": (last_anomaly.valid_time.isoformat() if last_anomaly is not None else None),
+    }
+    write_snapshot(
+        PRODUCTIVITY_TREND_CACHE_SOURCE, cache_key, result["source_url"], result, {"lat": lat, "lon": lon},
+    )
+    return result, None
 
 
 @registry.tool(
@@ -276,14 +451,14 @@ def _compute_recent_window_trend(thredds: Any, product: str, lat: float, lon: fl
     number=13,
     description=(
         "FORESHORE's own diagnostic for 'why has fish productivity declined here': a "
-        "multi-year INCOIS Argo subsurface temperature/salinity trend (genuinely up to "
-        "~9 years, from incois_argo_10d_VAM, cached -- this signal does not change day "
-        "to day) plus a short recent chlorophyll and sea-surface-temperature trend "
-        "indicator from the INCOIS OSF rolling-composite feeds (genuinely only as long "
-        "as the live catalogue actually holds -- typically a handful of days, never "
-        "presented as a multi-year record). Every number traces to a retrieved "
-        "observation with its own provenance; this is a FORESHORE derivation, never the "
-        "official INCOIS advisory."
+        "multi-year INCOIS Argo subsurface temperature trend (up to ~9 years, "
+        "incois_argo_10d_VAM), a multi-year chlorophyll trend from ISRO's own "
+        "Oceansat-2 Ocean Colour Monitor archive (2011-2020, falling back to NOAA "
+        "MODIS-Aqua only if Oceansat is unreachable), and a multi-year sea-surface "
+        "temperature trend plus NOAA's own published anomaly (OISST v2.1). Every number "
+        "traces to a retrieved observation with its own provenance; this is a FORESHORE "
+        "derivation, never the official INCOIS/ISRO/NOAA advisory, and disagreeing "
+        "signals are always shown side by side, never averaged."
     ),
     schema={
         "type": "object",
@@ -295,19 +470,20 @@ def _compute_recent_window_trend(thredds: Any, product: str, lat: float, lon: fl
                 "maxItems": 4,
                 "description": (
                     "Optional [minlon, minlat, maxlon, maxlat] EPSG:4326 override. "
-                    "Defaults to the active region's bbox; the Argo/OSF point queries "
-                    "use its centroid (Argo and OSF point()/timeseries() take a point, "
-                    "not a bbox)."
+                    "Defaults to the active region's bbox; all three signals query its "
+                    "centroid as a point."
                 ),
             },
             "years": {
                 "type": ["integer", "null"],
                 "description": (
-                    "Requested span, in years, for the Argo subsurface trend. The "
+                    "Requested span, in years, for the Argo subsurface trend only. The "
                     "underlying source bounds a single query to ~9 years "
                     "(incois_argo_10d_VAM's own MAX_TIMESERIES_SPAN_DAYS); a larger "
                     "request is clamped server-side and the response says so "
-                    "explicitly rather than silently. Default 10."
+                    "explicitly rather than silently. Default 10. The chlorophyll and "
+                    "sea-surface temperature trends always request the full span each "
+                    "source's own archive holds, independent of this parameter."
                 ),
                 "minimum": 1,
                 "maximum": 30,
@@ -316,7 +492,7 @@ def _compute_recent_window_trend(thredds: Any, product: str, lat: float, lon: fl
         "required": [],
     },
     specialists=("OceanAnalytics",),
-    reads_sources=("incois_argo", "incois_osf_chl", "incois_osf_sst"),
+    reads_sources=("incois_argo", "incois_oceansat2", "noaa_coastwatch"),
     emits_derived=True,
     cost="slow",
 )
@@ -334,6 +510,8 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
     driver_notes: list[str] = []
     diagnostics: dict[str, str] = {}
     series_payload: dict[str, Any] = {}
+    argo_direction: str | None = None
+    sst_direction: str | None = None
 
     # -- signal 1: Argo subsurface trend --------------------------------------------
     argo_trend, argo_err = _compute_argo_trend(region, lat, lon, years_use)
@@ -375,6 +553,7 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
         obs_lat = argo_trend.get("grid_lat") or lat
         obs_lon = argo_trend.get("grid_lon") or lon
         if argo_trend["slope_c_per_decade"] is not None:
+            argo_direction = argo_trend["direction"]
             observations.append(Observation(
                 variable="subsurface_temperature_trend",
                 value=round(argo_trend["slope_c_per_decade"], 4),
@@ -385,6 +564,8 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
                     "n_points": argo_trend["n_points"],
                     "depth_m": argo_trend["depth_m"],
                     "mean_temp_degc": round(argo_trend["mean_temp_degc"], 3),
+                    "obs_start": argo_trend["obs_start"],
+                    "obs_end": argo_trend["obs_end"],
                 },
             ))
             driver_notes.append(
@@ -409,88 +590,226 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
             ))
             missing.append("argo_subsurface_trend")
 
-    # -- signals 2/3: chlorophyll + SST recent rolling-window indicators -----------
-    thredds = None
-    try:
-        from ..sources.incois_thredds import IncoisThredds
-        thredds = IncoisThredds(region=region)
-    except Exception as exc:  # noqa: BLE001
-        reason = f"incois_thredds adapter unavailable: {type(exc).__name__}: {exc}"
-        diagnostics["chl_recent_trend"] = reason
-        diagnostics["sst_recent_trend"] = reason
-        missing.append("chl_recent_trend")
-        missing.append("sst_recent_trend")
-
-    if thredds is not None:
-        for product, label in (("chl", "chlorophyll"), ("sst", "sea-surface temperature")):
-            key = f"{product}_recent_trend"
-            trend, err = _compute_recent_window_trend(thredds, product, lat, lon)
-            if trend is None:
-                missing.append(key)
-                if err:
-                    diagnostics[key] = err
-                continue
-
-            series_payload[f"{product}_recent"] = trend["series"]
-            issued = datetime(*(int(x) for x in trend["date_end"].split("-")), tzinfo=UTC)
-            valid_from = datetime(*(int(x) for x in trend["date_start"].split("-")), tzinfo=UTC)
-            notes = (
-                f"recent {trend['span_days']}-day rolling-window indicator from INCOIS "
-                f"OSF '{product}' (incois_osf_{product}), {trend['n_points']} real "
-                f"cataloged date(s) actually retrieved, {trend['date_start']} to "
-                f"{trend['date_end']} -- NOT a multi-year record; the live catalogue for "
-                f"this product currently holds only this many dates. FORESHORE's own "
-                f"derived diagnostic, not an official INCOIS product."
+    # -- signal 2: chlorophyll trend (ISRO Oceansat-2, NOAA MODIS fallback) ---------
+    chl_trend, chl_err = _compute_chl_trend(region, lat, lon)
+    if chl_trend is None:
+        missing.append("chlorophyll_trend")
+        if chl_err:
+            diagnostics["chlorophyll_trend"] = chl_err
+    else:
+        is_oceansat = chl_trend["source_id"] == "incois_oceansat2"
+        product_phrase = (
+            "the ISRO Oceansat-2 Ocean Colour Monitor archive (a closed historical "
+            "record, 2011-02-02 to 2020-05-01 -- not current conditions)"
+            if is_oceansat else
+            "the NOAA MODIS-Aqua chlorophyll record (used as a fallback: the ISRO "
+            "Oceansat-2 archive was unavailable this run)"
+        )
+        obs_start = datetime.fromisoformat(chl_trend["obs_start"])
+        obs_end = datetime.fromisoformat(chl_trend["obs_end"])
+        notes_bits = [
+            f"linear trend (numpy.polyfit, degree 1) over {chl_trend['n_points']} real "
+            f"chlorophyll-a observations from {product_phrase}, actual retrieved span "
+            f"{chl_trend['obs_start']} to {chl_trend['obs_end']}",
+        ]
+        if chl_trend.get("time_range_clamped"):
+            notes_bits.append(
+                "the requested window exceeded this source's own archive coverage and "
+                "was clamped server-side to it -- the dates above are what was "
+                "actually returned"
             )
-            prov = Provenance(
-                source_id=f"foreshore_productivity_{product}_trend",
-                source_name=f"FORESHORE derived recent {label} trend (from incois_osf_{product})",
-                authority="derived",
-                url=trend["provenance_url"],
-                acquired_at=datetime.fromisoformat(trend["provenance_acquired_at"]),
-                issued_at=issued,
-                valid_from=valid_from,
-                valid_to=issued,
-                spatial_resolution_m=_PRODUCT_RESOLUTION_M[product],
-                is_derived=True,
-                notes=notes,
+        notes_bits.append("FORESHORE's own derived diagnostic, not an official product")
+        chl_prov = Provenance(
+            source_id="foreshore_productivity_chl_trend",
+            source_name=f"FORESHORE derived chlorophyll trend (from {chl_trend['source_name']})",
+            authority="derived",
+            url=chl_trend["source_url"],
+            acquired_at=utcnow(),
+            issued_at=obs_end,
+            valid_from=obs_start,
+            valid_to=obs_end,
+            spatial_resolution_m=chl_trend["spatial_resolution_m"],
+            is_derived=True,
+            notes="; ".join(notes_bits) + ".",
+        )
+        slope = chl_trend["slope_mg_m3_per_decade"]
+        se = chl_trend["se_mg_m3_per_decade"]
+        product_short = "ISRO Oceansat-2 archive" if is_oceansat else "NOAA MODIS fallback"
+        if slope is not None and se is not None:
+            # The chlorophyll analogue of ARGO_STABLE_EPSILON_C_PER_DECADE cannot be a
+            # fixed literature constant the way multi-decadal ocean warming can -- there
+            # is no comparably canonical "background chlorophyll trend" figure to anchor
+            # a round number to. Instead the noise floor is the fitted regression's own
+            # standard error of the decade slope (residual variance over the
+            # time-axis sum-of-squares, via ``_linear_trend_fit`` -- the same OLS
+            # formula behind any textbook confidence interval on a fitted slope): "is
+            # this slope distinguishable from zero given how noisy this specific
+            # retrieved series actually is," derived from the data itself rather than
+            # assumed. One standard error, not an arbitrary multiple of it, so the
+            # floor is tied only to the series' own scatter, not to a chosen
+            # confidence level.
+            noise_floor = se
+            direction = _direction_label(slope, noise_floor, rising="increasing", falling="declining")
+            observations.append(Observation(
+                variable="chlorophyll_a_trend",
+                value=round(slope, 4),
+                unit="mg/m^3/decade",
+                lat=chl_trend["grid_lat"], lon=chl_trend["grid_lon"], valid_time=obs_end, provenance=chl_prov,
+                qualifiers={
+                    "direction": direction,
+                    "n_points": chl_trend["n_points"],
+                    "mean_mg_m3": round(chl_trend["mean_mg_m3"], 4),
+                    "noise_floor_mg_m3_per_decade": round(noise_floor, 4),
+                    "source": product_short,
+                    "obs_start": chl_trend["obs_start"],
+                    "obs_end": chl_trend["obs_end"],
+                },
+            ))
+            driver_notes.append(
+                f"chlorophyll ({product_short}) is {direction} at {slope:+.4f} "
+                f"mg/m^3 per decade over {chl_trend['n_points']} real observations "
+                f"({chl_trend['obs_start'][:10]} to {chl_trend['obs_end'][:10]})"
             )
-            if trend["method"] == "single_point":
-                observations.append(Observation(
-                    variable=f"{trend['canonical_var']}_recent_level",
-                    value=round(trend["last_value"], 4),
-                    unit=trend["unit"],
-                    lat=lat, lon=lon, valid_time=issued, provenance=prov,
-                    qualifiers={
-                        "n_points": 1,
-                        "note": "only one real cataloged date available -- a single reading is reported, not a trend",
-                    },
-                ))
-                missing.append(key)
-                driver_notes.append(
-                    f"{label} single recent reading ({trend['date_end']}): "
-                    f"{trend['last_value']:.3f} {trend['unit']} -- insufficient real "
-                    "dates for a trend"
-                )
-            else:
-                observations.append(Observation(
-                    variable=f"{trend['canonical_var']}_recent_delta",
-                    value=round(trend["delta"], 4),
-                    unit=trend["unit"],
-                    lat=lat, lon=lon, valid_time=issued, provenance=prov,
-                    qualifiers={
-                        "n_points": trend["n_points"],
-                        "method": trend["method"],
-                        "first_value": trend["first_value"],
-                        "last_value": trend["last_value"],
-                    },
-                ))
-                driver_notes.append(
-                    f"{label} moved {trend['delta']:+.3f} {trend['unit']} over the real "
-                    f"{trend['span_days']}-day window actually retrieved "
-                    f"({trend['date_start']} to {trend['date_end']}, {trend['n_points']} "
-                    "cataloged date(s))"
-                )
+        else:
+            # Fewer than 3 real points: no residual degree of freedom to estimate a
+            # noise floor from, so this module reports the level actually retrieved
+            # rather than a slope it cannot defend as more than noise.
+            observations.append(Observation(
+                variable="chlorophyll_a_level",
+                value=round(chl_trend["mean_mg_m3"], 4),
+                unit="mg/m^3",
+                lat=chl_trend["grid_lat"], lon=chl_trend["grid_lon"], valid_time=obs_end, provenance=chl_prov,
+                qualifiers={
+                    "n_points": chl_trend["n_points"],
+                    "obs_start": chl_trend["obs_start"],
+                    "obs_end": chl_trend["obs_end"],
+                    "note": "too few real observations at this point to fit a defensible decade trend",
+                },
+            ))
+            missing.append("chlorophyll_trend")
+            driver_notes.append(
+                f"chlorophyll ({product_short}): only {chl_trend['n_points']} real "
+                "observation(s) at this point -- insufficient for a trend"
+            )
+
+    # -- signal 3: sea-surface temperature trend + NOAA's own anomaly ---------------
+    sst_trend, sst_err = _compute_sst_trend(region, lat, lon)
+    if sst_trend is None:
+        missing.append("sst_trend")
+        if sst_err:
+            diagnostics["sst_trend"] = sst_err
+    else:
+        obs_start = datetime.fromisoformat(sst_trend["obs_start"])
+        obs_end = datetime.fromisoformat(sst_trend["obs_end"])
+        notes_bits = [
+            f"linear trend (numpy.polyfit, degree 1) over {sst_trend['n_points']} real "
+            f"daily NOAA OISST v2.1 (ncdcOisst21Agg) sea-surface temperature "
+            f"observations, actual retrieved span {sst_trend['obs_start']} to "
+            f"{sst_trend['obs_end']}",
+        ]
+        if sst_trend.get("time_range_clamped"):
+            notes_bits.append(
+                "the requested window exceeded this source's own record and was "
+                "clamped server-side to it -- the dates above are what was actually "
+                "returned"
+            )
+        notes_bits.append("FORESHORE's own derived diagnostic, not an official NOAA product")
+        sst_prov = Provenance(
+            source_id="foreshore_productivity_sst_trend",
+            source_name=f"FORESHORE derived sea-surface temperature trend (from {sst_trend['source_name']})",
+            authority="derived",
+            url=sst_trend["source_url"],
+            acquired_at=utcnow(),
+            issued_at=obs_end,
+            valid_from=obs_start,
+            valid_to=obs_end,
+            spatial_resolution_m=sst_trend["spatial_resolution_m"],
+            is_derived=True,
+            notes="; ".join(notes_bits) + ".",
+        )
+        slope = sst_trend["slope_c_per_decade"]
+        if slope is not None:
+            sst_direction = _direction_label(slope, ARGO_STABLE_EPSILON_C_PER_DECADE)
+            observations.append(Observation(
+                variable="sea_surface_temperature_trend",
+                value=round(slope, 4),
+                unit="degC/decade",
+                lat=sst_trend["grid_lat"], lon=sst_trend["grid_lon"], valid_time=obs_end, provenance=sst_prov,
+                qualifiers={
+                    "direction": sst_direction,
+                    "n_points": sst_trend["n_points"],
+                    "mean_temp_degc": round(sst_trend["mean_temp_degc"], 3),
+                    "obs_start": sst_trend["obs_start"],
+                    "obs_end": sst_trend["obs_end"],
+                },
+            ))
+            driver_notes.append(
+                f"sea-surface temperature (NOAA OISST v2.1) is {sst_direction} at "
+                f"{slope:+.3f} degC/decade over {sst_trend['n_points']} real daily "
+                f"observations ({sst_trend['obs_start'][:10]} to {sst_trend['obs_end'][:10]})"
+            )
+        else:
+            observations.append(Observation(
+                variable="sea_surface_temperature_single_reading",
+                value=round(sst_trend["mean_temp_degc"], 3),
+                unit="degC",
+                lat=sst_trend["grid_lat"], lon=sst_trend["grid_lon"], valid_time=obs_end, provenance=sst_prov,
+                qualifiers={
+                    "n_points": sst_trend["n_points"],
+                    "note": "only one real OISST observation available at this point -- insufficient for a trend",
+                },
+            ))
+            missing.append("sst_trend")
+
+        # NOAA's own published anomaly -- not a FORESHORE derivation, so is_derived=False
+        # and the Provenance names OISST directly rather than "FORESHORE derived ...".
+        if sst_trend.get("latest_anomaly_degc") is not None:
+            anomaly_time = datetime.fromisoformat(sst_trend["latest_anomaly_time"])
+            anomaly_prov = Provenance(
+                source_id=sst_trend["source_id"],
+                source_name=sst_trend["source_name"],
+                authority=sst_trend["authority"],
+                url=sst_trend["source_url"],
+                acquired_at=utcnow(),
+                issued_at=anomaly_time,
+                valid_from=anomaly_time,
+                valid_to=anomaly_time,
+                spatial_resolution_m=sst_trend["spatial_resolution_m"],
+                is_derived=False,
+                notes=(
+                    "NOAA OISST v2.1's own published anomaly against its own 1971-2000 "
+                    "climatology -- FORESHORE does not compute this baseline itself."
+                ),
+            )
+            observations.append(Observation(
+                variable="sea_surface_temperature_anomaly",
+                value=round(sst_trend["latest_anomaly_degc"], 3),
+                unit="degC",
+                lat=sst_trend["grid_lat"], lon=sst_trend["grid_lon"], valid_time=anomaly_time,
+                provenance=anomaly_prov,
+                qualifiers={"reference_climatology": "NOAA OISST v2.1 published 1971-2000 baseline"},
+            ))
+            driver_notes.append(
+                f"NOAA's own published anomaly against its 1971-2000 baseline was "
+                f"{sst_trend['latest_anomaly_degc']:+.3f} degC as of "
+                f"{sst_trend['latest_anomaly_time'][:10]}"
+            )
+
+    # -- disagreement check: subsurface vs. surface temperature ----------------------
+    # Never averaged into one number -- CLAUDE.md's "do not average disagreeing
+    # sources" applies as much between depths of the same water column as it does
+    # between two competing products of the same variable. Only compared when both
+    # actually produced a directional trend (not "insufficient_data"/"stable" noise).
+    if (
+        argo_direction in ("warming", "cooling")
+        and sst_direction in ("warming", "cooling")
+        and argo_direction != sst_direction
+    ):
+        driver_notes.append(
+            "subsurface and sea-surface temperature trends move in opposite "
+            "directions here -- reported separately, not averaged, since they "
+            "measure different depths of the same water column"
+        )
 
     payload: dict[str, Any] = {
         "bbox": list(bbox_use),
@@ -499,17 +818,19 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
         "series": series_payload,
         "diagnostics": diagnostics,
         "disclaimer": (
-            "FORESHORE's own diagnostic derivation over raw retrieved INCOIS series -- "
-            "never the official INCOIS PFZ advisory or coastal bulletin."
+            "FORESHORE's own diagnostic derivation over raw retrieved INCOIS/ISRO/NOAA "
+            "series -- never the official INCOIS PFZ advisory or coastal bulletin."
         ),
     }
 
     if not observations:
+        missing_words = [_SIGNAL_WORDS.get(m, m) for m in sorted(set(missing))]
         summary = (
             "FORESHORE productivity diagnostic -- insufficient data for a productivity "
             f"diagnostic right now (centred on {lat:.3f}, {lon:.3f}): "
-            + "; ".join(f"{m} ({diagnostics.get(m, 'no data available')})" for m in missing)
-            + ". Abstaining rather than inventing a causal narrative."
+            + ", ".join(missing_words)
+            + " are all unavailable this run. Abstaining rather than inventing a "
+            "causal narrative."
         )
         return ToolResult(
             tool="get_productivity_history", ok=True, partial=True, missing=missing,
@@ -518,11 +839,12 @@ def get_productivity_history(bbox: list[float] | None = None, years: int | None 
 
     summary_bits = [
         "FORESHORE productivity diagnostic (FORESHORE's own derivation, not an "
-        f"official INCOIS product), centred on ({lat:.3f}, {lon:.3f}):"
+        f"official INCOIS/ISRO/NOAA product), centred on ({lat:.3f}, {lon:.3f}):"
     ]
     summary_bits.extend(f" {n}." for n in driver_notes)
     if missing:
-        summary_bits.append(" Not available this run: " + ", ".join(sorted(set(missing))) + ".")
+        missing_words = [_SIGNAL_WORDS.get(m, m) for m in sorted(set(missing))]
+        summary_bits.append(" Not available this run: " + ", ".join(missing_words) + ".")
     summary = " ".join(summary_bits)
 
     return ToolResult(

@@ -25,6 +25,20 @@ anchor_ports:
     lon: 68.7100
     district: Kachchh
 
+# Named working grounds — the route destination when a question does not name one. Same
+# role as in palk_bay_gom.yaml; present here because "does this only work for Tamil
+# Nadu?" must be answered by a config swap, and a region missing this key would silently
+# lose route planning.
+fishing_grounds:
+  - name: Gulf of Kachchh grounds off Okha
+    lat: 22.3000
+    lon: 68.8000
+    district: Devbhumi Dwarka
+  - name: Saurashtra shelf grounds off Porbandar
+    lat: 21.3500
+    lon: 69.3000
+    district: Porbandar
+
 districts: [Kachchh, Devbhumi Dwarka, Jamnagar, Porbandar, Morbi]
 
 sources:

@@ -677,9 +677,18 @@ def check_unsourced_numbers(
         if obs.is_numeric:
             v = float(obs.value)
             sourced.extend([v, round(v, 1), round(v, 2), round(v)])
+            # A negative observation is written in prose with the sign carried by the
+            # word, not the digits: a -1.407 degC/decade slope becomes "cooling at 1.41
+            # degC/decade". Without the magnitude here that sentence failed the audit
+            # (|1.41 - -1.41| = 2.82) and a correct, sourced answer was thrown away for
+            # the template. Magnitudes only — this widens what counts as sourced, it
+            # does not let an unsourced number through.
+            a = abs(v)
+            sourced.extend([a, round(a, 1), round(a, 2), round(a)])
         for q in obs.qualifiers.values():
             if isinstance(q, (int, float)) and not isinstance(q, bool):
                 sourced.append(float(q))
+                sourced.append(abs(float(q)))
 
     bad: list[str] = []
     for m in _NUMBER.finditer(text or ""):

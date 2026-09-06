@@ -18,6 +18,7 @@ an exception.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Sequence
 
 from ..config import load_vessels
 from ..models import Observation, Provenance, Route, ToolResult, utcnow
@@ -116,6 +117,32 @@ def _route_observations(route: Route, field: CostField, origin: tuple[float, flo
             valid_time=valid_time, provenance=prov, qualifiers=qualifiers,
         ))
     return observations
+
+
+#: The cost field marks a blocked cell with a one-word reason (``costfield.py``:
+#: ``shallow``, ``imbl``, ``exclusion``, ``land``). Those are internal identifiers, and
+#: they were reaching the answer verbatim as "Routed around: imbl, land." — a tool summary
+#: is spliced into user-facing prose, so it may not carry an internal code. The five
+#: geofence classes stay semantically distinct here too: this says the boundary was
+#: avoided, and `check_geofences` is what says *which* boundary and under which treaty.
+_AVOIDED_PHRASES: dict[str, str] = {
+    "imbl": "the India–Sri Lanka maritime boundary",
+    "exclusion": "an active exclusion zone",
+    "shallow": "water too shallow for this vessel",
+    "land": "the coastline",
+}
+
+
+def _avoided_sentence(avoided: Sequence[str]) -> str:
+    """What the route bent around, in words a fisherman reads. An unrecognised reason is
+    dropped rather than printed raw — a new code added to the cost field must not leak
+    into the answer before somebody has written copy for it."""
+    phrases = [_AVOIDED_PHRASES[a] for a in avoided if a in _AVOIDED_PHRASES]
+    if not phrases:
+        return ""
+    if len(phrases) == 1:
+        return f" The route bends to keep clear of {phrases[0]}."
+    return f" The route bends to keep clear of {', '.join(phrases[:-1])} and {phrases[-1]}."
 
 
 @registry.tool(
@@ -223,7 +250,7 @@ def plan_route(
         f" Cost-field inputs unavailable this call (defaulted to zero, never treated as "
         f"safe): {', '.join(missing)}." if missing else ""
     )
-    avoided_bit = f" Routed around: {', '.join(route.avoided)}." if route.avoided else ""
+    avoided_bit = _avoided_sentence(route.avoided)
     summary = (
         f"Route planned: {route.total_distance_nm:.1f} nm over {len(route.legs)} leg(s), "
         f"ETA {route.total_eta_seconds / 3600.0:.1f} h at {vessel.cruise_speed_kn:.1f} kn "
