@@ -31,9 +31,10 @@ submission rests on them:
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Callable, Iterable, Literal, Sequence
 from uuid import uuid4
 
 from ..config import RegionConfig, env, load_region
@@ -49,6 +50,19 @@ from .synthesis import compose
 
 #: The verdict runs last, always, whatever order the planner put it in.
 VERDICT_TOOL = "evaluate_verdict"
+
+#: Model turns a specialist gets. Its planned evidence is seeded into its context before
+#: it starts, so one turn is enough to reason over it; the second is room for a genuine
+#: follow-up call. Uncapped, a model that keeps re-reading the same tool spent three
+#: round-trips per specialist gathering nothing new.
+SPECIALIST_MAX_TURNS = 2
+
+
+def _concurrent_specialists() -> bool:
+    """Whether specialists run in parallel. ``FORESHORE_SPECIALISTS=serial`` forces the
+    old one-at-a-time path — an escape hatch for a venue where something misbehaves, not
+    a mode anyone should need."""
+    return (env("FORESHORE_SPECIALISTS", "parallel") or "parallel").strip().lower() != "serial"
 
 #: Variables whose governing reading is highlighted in the evidence panel.
 GOVERNING_VARIABLES: tuple[str, ...] = (
@@ -97,6 +111,8 @@ class QueryOutcome:
     scenario: "ScenarioComparison | None" = None
 
     def to_dict(self) -> dict[str, Any]:
+        from ..config import mode as run_mode
+
         return {
             **self.answer.to_dict(),
             "plan": self.plan.to_dict(),
@@ -105,6 +121,11 @@ class QueryOutcome:
             "specialists_used": self.specialists_used,
             "architecture": specialists.architecture(),
             "scenario": self.scenario.to_dict() if self.scenario else None,
+            # "live" or "fixture", on every answer. A frozen-snapshot answer is a valid
+            # answer — invariant 7 exists so a venue's wifi cannot kill a demo — but it
+            # is answering about a different day, and a bulletin two days stale reads
+            # exactly like a real expiry unless the surface says which it is.
+            "run_mode": run_mode(),
         }
 
 
@@ -179,9 +200,27 @@ def answer(
     runtime: AgentRuntime | None = None,
     region: RegionConfig | None = None,
     traces: TraceStore | None = None,
+    on_status: Callable[[str, str], None] | None = None,
+    on_token: Callable[[str], None] | None = None,
 ) -> QueryOutcome:
-    """Run the whole request path for one question."""
+    """Run the whole request path for one question.
+
+    ``on_status`` (phase, detail) and ``on_token`` (text delta) are optional presentation
+    hooks for a streaming surface. Neither is allowed to affect the answer: the returned
+    ``QueryOutcome`` is byte-identical whether or not they were supplied, because every
+    deterministic guard — the evidence audit, the advisory ceiling, the answer contract —
+    runs on the assembled text after the last delta has gone out. What a viewer watches
+    being typed is a draft; what they are left with is the audited answer.
+    """
     t0 = time.perf_counter()
+
+    def _status(phase: str, detail: str) -> None:
+        if on_status is None:
+            return
+        try:
+            on_status(phase, detail)
+        except Exception:  # noqa: BLE001 — a disconnected viewer never fails an answer
+            pass
     region = region or load_region(query.region_id)
     query_id = query.query_id or str(uuid4())
     # English-pinned until the Bhashini language stack is in (see CLAUDE.md's open
@@ -264,8 +303,15 @@ def answer(
         steps,
     )
 
+    _status(
+        "planning",
+        f"Planned {len([s for s in plan.steps if s.tool != VERDICT_TOOL])} tool calls "
+        f"for {', '.join(plan.intents)}.",
+    )
+
     # -- 1. Evidence ---------------------------------------------------------------------
     # Deterministic, and identical with or without a model. The verdict tool is held back.
+    _status("evidence", "Gathering evidence from the source adapters.")
     for step in plan.steps:
         if step.tool == VERDICT_TOOL:
             continue
@@ -293,36 +339,84 @@ def answer(
     specialists_used: list[str] = []
     if query.use_model and _model_available(runtime):
         by_specialist = plan.by_specialist()
-        for name in _specialist_order(plan):
-            if name == "RiskAssessment":
-                continue          # its tool is the verdict, and the verdict runs last
+        order = [n for n in _specialist_order(plan) if n != "RiskAssessment"]
+        if order:
+            _status("reasoning", f"{', '.join(order)} reasoning over the evidence.")
+        # RiskAssessment is excluded above: its tool is the verdict, and the verdict runs
+        # last, after every other specialist has had its say.
+
+        def _run_specialist(name: str) -> tuple[str, Any] | None:
             try:
                 spec = specialists.get(name)
             except KeyError:
-                continue
-            gathered = [
-                r for r in results
-                if any(s.tool == r.tool for s in by_specialist.get(name, []))
-            ]
-            run = runtime.run(
+                return None
+            steps_for = by_specialist.get(name, [])
+            # The evidence this specialist's own planned tools already produced, handed
+            # over rather than re-fetched. The brief has always told it "the results of
+            # those calls are already in your context"; until now nothing put them there,
+            # so it went and called the tools again — two or three extra model
+            # round-trips per specialist, for data already sitting in `results`.
+            prior = [r for r in results if any(s.tool == r.tool for s in steps_for)]
+            return name, runtime.run(
                 name,
                 spec.prompt(),
-                _specialist_brief(query.text, language, by_specialist.get(name, [])),
+                _specialist_brief(query.text, language, steps_for),
                 tool_names=list(spec.tools),
                 parent_id=root.step_id,
                 max_tokens=900,
+                prior_results=prior,
+                # One turn to reason over the seeded evidence, one more if it genuinely
+                # needs a follow-up call. A specialist that keeps re-reading the same
+                # tool is not gathering anything; it is spending the demo's patience.
+                max_turns=SPECIALIST_MAX_TURNS,
             )
+
+        # Specialists hold disjoint tool subsets and read a shared evidence bus they do
+        # not mutate until they return, so they are independent and run concurrently —
+        # 16 s of sequential model calls became one wait for the slowest. Results are
+        # merged below in plan order, never completion order, so the trace a judge reads
+        # is identical run to run.
+        runs: dict[str, Any] = {}
+        if len(order) > 1 and _concurrent_specialists():
+            with ThreadPoolExecutor(max_workers=min(len(order), 4)) as pool:
+                for future in [pool.submit(_run_specialist, n) for n in order]:
+                    try:
+                        got = future.result()
+                    except Exception as exc:  # noqa: BLE001 — one specialist, not the answer
+                        missing.append(f"specialist:{type(exc).__name__}: {exc}")
+                        continue
+                    if got is not None:
+                        runs[got[0]] = got[1]
+        else:
+            for name in order:
+                got = _run_specialist(name)
+                if got is not None:
+                    runs[got[0]] = got[1]
+
+        # Identity, not equality: `prior_results` hands the specialist the very same
+        # ToolResult objects that are already in `results`, and two genuinely distinct
+        # calls to the same tool with the same args would compare equal field-by-field.
+        seen_results = {id(r) for r in results}
+        for name in order:
+            run = runs.get(name)
+            if run is None:
+                continue
             specialists_used.append(name)
             steps.extend(run.steps)
             for extra in run.tool_results:
+                # Seeded results are already in `results` and already on the bus. Only
+                # genuinely new calls a specialist made itself are merged.
+                if id(extra) in seen_results:
+                    continue
+                seen_results.add(id(extra))
                 results.append(extra)
                 record_evidence(query_id, extra.observations)
                 missing.extend(extra.missing)
             if run.error:
                 missing.append(f"{name}:{run.error}")
-            del gathered
 
     # -- 3. Verdict, last ------------------------------------------------------------------
+    _status("verdict", "Applying vessel thresholds, then the advisory ceiling.")
     verdict: Verdict | None = None
     if VERDICT_TOOL in runtime.registry:
         verdict_result = runtime.execute_tool(
@@ -381,6 +475,7 @@ def answer(
             route = r.payload["route"]
             break
 
+    _status("writing", "Composing the answer and auditing it against the evidence.")
     composed = compose(
         query_id=query_id,
         question=query.text,
@@ -402,6 +497,7 @@ def answer(
         # presentation only: the safety spine, the verdict and the ceiling are identical
         # either way.
         answer_kind=plan.answer_kind,
+        on_token=on_token,
     )
 
     clear_evidence(query_id)

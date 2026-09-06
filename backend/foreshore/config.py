@@ -23,6 +23,62 @@ CACHE_DIR = DATA_DIR / "cache"
 FIXTURE_DIR = DATA_DIR / "fixtures"
 ARTIFACT_DIR = REPO_ROOT / "docs" / "artifacts"
 
+ENV_FILE = REPO_ROOT / ".env"
+
+
+def _load_env_file(path: Path = ENV_FILE) -> None:
+    """Read ``.env`` into the process environment, once, at import.
+
+    Nothing used to do this. ``env()`` read ``os.environ`` and only ``os.environ``, so a
+    server started with a plain ``uvicorn`` command ran with no provider key, no
+    ``FORESHORE_MODE`` and no region override — the keys in ``.env`` were simply never
+    seen, and the symptom was a 48 ms answer in flat template prose with no model in the
+    loop and no error anywhere to explain it. The tests passed because they call
+    ``load_dotenv()`` themselves.
+
+    **A variable already in the environment always wins.** ``FORESHORE_MODE=fixture
+    uvicorn ...`` has to keep meaning fixture, and CI must not be overridden by a
+    developer's file. Parsing is deliberately minimal — ``KEY=VALUE``, ``#`` comments,
+    optional ``export``, optional surrounding quotes — because a dependency on
+    python-dotenv is not worth adding to the demo's critical path for this.
+
+    ``FORESHORE_SKIP_DOTENV=1`` disables it entirely. The test suite sets that: its
+    conftest asserts ``FORESHORE_PG_DSN`` is unset so ``VectorStore`` cannot dial
+    PostGIS, and a developer's ``.env`` legitimately sets it. Unsetting is not enough
+    when an import can put it back, so the harness declares the intent instead.
+    """
+    try:
+        if os.environ.get("FORESHORE_SKIP_DOTENV", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            return
+        if not path.is_file():
+            return
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
+            key, sep, value = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            os.environ[key] = value
+    except OSError:
+        # An unreadable .env must not stop the process booting. Every value in it is an
+        # upgrade, not a dependency: with none of them the system still answers, from
+        # live keyless sources, through the scripted client.
+        return
+
+
+_load_env_file()
+
 
 def mode() -> Mode:
     m = os.environ.get("FORESHORE_MODE", "live").strip().lower()

@@ -4,8 +4,8 @@
  * difference), rendered with this surface's own verdict/evidence-panel shape rather
  * than importing anything from routes/boat.
  */
-import { useState, type FormEvent } from "react";
-import { ApiError, postQuery } from "@shared/api";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { streamQuery } from "@shared/api";
 import type { Handoff, QueryOutcome, Verdict } from "@shared/types";
 import {
   formatDistanceNm,
@@ -52,26 +52,55 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
+  const [streamingText, setStreamingText] = useState("");
+  const [phase, setPhase] = useState<{ phase: string; detail: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // A new submit cancels whatever is still in flight, and unmounting mid-stream aborts
+  // too — streamQuery's fetch is otherwise left running against a component that can no
+  // longer render its result.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || loading) return;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
-    try {
-      const res = await postQuery({ text: trimmed, surface: "console", use_model: true });
-      setOutcome(res);
-      onQueryComplete(res);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(`API ${err.status}: ${JSON.stringify(err.body)}`);
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      setLoading(false);
-    }
+    setStreamingText("");
+    setPhase(null);
+
+    await streamQuery(
+      { text: trimmed, surface: "console", use_model: true },
+      {
+        onStatus: (s) => setPhase({ phase: s.phase, detail: s.detail }),
+        onToken: (delta) => setStreamingText((prev) => prev + delta),
+        onDone: (res) => {
+          // done.text is authoritative — the draft is replaced wholesale, never merged
+          // with what streamed (evidence audit / contract repairs / polish may all have
+          // changed it since the last token).
+          setStreamingText("");
+          setPhase(null);
+          setOutcome(res);
+          onQueryComplete(res);
+          setLoading(false);
+        },
+        onError: (message) => {
+          setStreamingText("");
+          setPhase(null);
+          setError(message);
+          setLoading(false);
+        },
+      },
+      controller.signal,
+    );
   }
 
   return (
@@ -90,7 +119,104 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
         </div>
       </form>
       {error && <p className="empty-note empty-note--error">{error}</p>}
-      {outcome && <QueryResult outcome={outcome} onViewTrace={onViewTrace} />}
+      {loading && <StreamingResult phase={phase} streamingText={streamingText} />}
+      {!loading && outcome && <QueryResult outcome={outcome} onViewTrace={onViewTrace} />}
+    </div>
+  );
+}
+
+/**
+ * Shown in place of the result header/text while a stream is in flight. Status events may
+ * arrive with no tokens at all (template path — see streamQuery's doc comment), so this
+ * renders correctly with an empty `streamingText` too: just the phase line and the empty
+ * draft box, never a blank gap.
+ */
+function StreamingResult({
+  phase,
+  streamingText,
+}: {
+  phase: { phase: string; detail: string } | null;
+  streamingText: string;
+}) {
+  return (
+    <div className="query-result query-result--streaming">
+      <div className="query-result__header">
+        <span className="query-status">
+          <span className="query-status__dot" />
+          {phase?.detail ?? "Working…"}
+        </span>
+      </div>
+      <p className="query-result__text query-result__text--streaming">
+        {streamingText || <span className="query-result__text-waiting">Waiting for the draft…</span>}
+      </p>
+      <p className="query-result__draft-note">
+        Draft — final answer is checked against the evidence before it is shown.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Two things about an answer that are invisible from the answer itself, and that were
+ * costing real debugging time: whether the sources were live or a frozen snapshot, and
+ * whether a model wrote the prose or the deterministic template did.
+ *
+ * Both fallbacks are correct by design — fixture mode exists so venue wifi cannot kill a
+ * demo, and a template answer carries the same verdict, evidence and trace. But a
+ * two-day-old fixture bulletin reads exactly like a genuine expiry, and template prose
+ * reads like a terse model. Neither should have to be inferred from the response time.
+ * Both chips render only when something is *not* the default, so a healthy answer stays
+ * uncluttered.
+ */
+function ProvenanceChips({ outcome }: { outcome: QueryOutcome }) {
+  const fixture = outcome.run_mode === "fixture";
+  const model = outcome.payloads.model;
+  const templated = model?.written_by === "template";
+  if (!fixture && !templated) return null;
+  return (
+    <>
+      {fixture && (
+        <span className="chip chip--warn" title="Answers replay frozen snapshots from data/fixtures/">
+          fixture data
+        </span>
+      )}
+      {templated && (
+        <span className="chip chip--warn" title={model?.degraded_reason ?? undefined}>
+          template prose
+        </span>
+      )}
+    </>
+  );
+}
+
+/** The "why" behind those chips, in a sentence, under the answer. */
+function AnswerProvenanceNote({ outcome }: { outcome: QueryOutcome }) {
+  const model = outcome.payloads.model;
+  const repairs = outcome.payloads.contract_repairs ?? [];
+  const fixture = outcome.run_mode === "fixture";
+  const templated = model?.written_by === "template";
+  if (!fixture && !templated && repairs.length === 0) return null;
+  return (
+    <div className="query-result__provenance">
+      {fixture && (
+        <p>
+          Sources are frozen snapshots from <code>data/fixtures/</code>, not today's data — every
+          timestamp below is the snapshot's, so a bulletin may report itself expired when the live
+          one is current. Unset <code>FORESHORE_MODE</code> for live sources.
+        </p>
+      )}
+      {templated && (
+        <p>
+          The prose was composed from templates, not by a model
+          {model?.degraded_reason ? `: ${model.degraded_reason}` : ""}. The verdict, evidence panel
+          and trace are unaffected.
+        </p>
+      )}
+      {repairs.length > 0 && (
+        <p>
+          Model output was repaired before display: {repairs.join("; ")}.
+        </p>
+      )}
     </div>
   );
 }
@@ -113,11 +239,13 @@ function QueryResult({
       <div className="query-result__header">
         <span>Answered in {formatDuration(outcome.duration_ms)}</span>
         <span>Language: {outcome.language}</span>
+        <ProvenanceChips outcome={outcome} />
         <button type="button" className="btn btn--link" onClick={() => onViewTrace(outcome.query_id)}>
           View full trace ({shortId(outcome.query_id)})
         </button>
       </div>
       <p className="query-result__text">{outcome.text}</p>
+      <AnswerProvenanceNote outcome={outcome} />
 
       {verdict ? (
         <VerdictBlock verdict={verdict} answerKind={answerKind} />

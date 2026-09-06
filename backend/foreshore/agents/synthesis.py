@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from ..config import RegionConfig, env, load_region, load_vessels
 from ..models import (
@@ -159,7 +159,14 @@ Hard rules:
 - NEVER write the internal verdict codes GO, GO_WITH_CAUTION or DO_NOT_ADVISE. They are
   database values, not words a person says. Use the plain wording you are given below.
 - Do not open with a bare label followed by a full stop. Every line is a real sentence.
-- Four sentences at most unless the question was analytical.
+
+Presentation — this is the text that goes on the screen, so write it finished:
+- Plain prose only. No markdown, no bullets, no headings, no bold, no line breaks.
+- Do not name tools, variables, source ids, file paths or error classes. The reader
+  cannot call a tool and does not know what a SourceError is.
+- Do not repeat a fact you have already stated, in different words or the same.
+- Every sentence ends in a full stop. Never end on a bare name or a fragment.
+- {sentence_budget}
 """
 
 #: What "answer the question" means for each kind. Substituted into SYNTHESIS_SYSTEM.
@@ -590,6 +597,9 @@ def polish_answer(
     language: str,
     runtime: AgentRuntime | None,
     analytical: bool = False,
+    #: "model" when synthesis prose survived its audits, "template" otherwise. Decides
+    #: whether the editor pass is worth a call under FORESHORE_POLISH=auto.
+    written_by: str = "template",
 ) -> tuple[str, list[TraceStep], dict[str, Any]]:
     """Rewrite ``text`` for readability, or return it untouched.
 
@@ -603,11 +613,24 @@ def polish_answer(
     if not cleaned:
         note["reason"] = "nothing to polish"
         return cleaned, [], note
-    # The editor is a second model call per answer. `FORESHORE_POLISH=off` drops back to
-    # the deterministic typography cleanup alone — for a slow venue link, or to halve the
-    # token spend during development. On by default; the demo wants the polished read.
-    if (env("FORESHORE_POLISH", "on") or "on").lower() in {"off", "0", "false", "no"}:
+
+    # The editor is a whole extra model call per answer — a second or two on every query,
+    # and on a streaming surface it also means rewriting text the viewer just watched
+    # being typed.
+    #
+    # `auto` (the default) resolves that by moving the job upstream: SYNTHESIS_SYSTEM now
+    # carries the same presentation rules this pass used to enforce, so model-written
+    # prose arrives finished and needs no editor. The template path still gets one,
+    # because the template is assembled from tool summaries and genuinely reads like a
+    # form — that is where an editor earns its call.
+    #
+    # `on` forces it always, `off` never (deterministic typography cleanup only).
+    setting = (env("FORESHORE_POLISH", "auto") or "auto").strip().lower()
+    if setting in {"off", "0", "false", "no"}:
         note["reason"] = "polish disabled (FORESHORE_POLISH=off)"
+        return cleaned, [], note
+    if setting not in {"on", "1", "true", "yes"} and written_by == "model":
+        note["reason"] = "not needed: written to the presentation rules already"
         return cleaned, [], note
     if runtime is None or not runtime.client.available or _is_scripted(runtime):
         note["reason"] = "no model available"
@@ -742,6 +765,7 @@ def compose(
     extras: Sequence[str] = (),
     analytical: bool = False,
     answer_kind: str = "ADVISORY",
+    on_token: Callable[[str], None] | None = None,
 ) -> AgentAnswer:
     """Build the final answer. Template first, model second, audit last.
 
@@ -770,6 +794,18 @@ def compose(
     text = base
     unsourced: list[str] = []
     repairs: list[str] = []
+    # Which path actually wrote the words a person is about to read. A deterministic
+    # answer is a correct answer — it carries the same verdict, evidence and trace — but
+    # it must never be mistaken for a model-written one, and "the response came back
+    # suspiciously fast" is not a diagnosis anyone should have to make.
+    written_by = "template"
+    degraded: str | None = None
+    if runtime is None:
+        degraded = "no runtime supplied"
+    elif not runtime.client.available:
+        degraded = f"{runtime.client.name} is not available"
+    elif _is_scripted(runtime):
+        degraded = "no provider key configured — scripted client in use"
 
     if runtime is not None and runtime.client.available and not _is_scripted(runtime):
         system = SYNTHESIS_SYSTEM.format(
@@ -777,32 +813,45 @@ def compose(
             answer_kind_rule=ANSWER_KIND_RULES.get(
                 answer_kind, ANSWER_KIND_RULES["ADVISORY"]
             ),
+            sentence_budget=(
+                "At most six sentences." if analytical else "At most four sentences."
+            ),
         )
         prompt = _synthesis_prompt(question, verdict, tool_results, language, answer_kind)
+        # The one turn whose prose a person watches being written, so the only one that
+        # streams. `tool_names=[]` is what makes that safe — a streamed tool-call turn
+        # would mean reassembling partial JSON arguments for output nobody reads.
         result = runtime.run(
-            "SynthesisAgent", system, prompt, tool_names=[], parent_id=None, max_tokens=1200
+            "SynthesisAgent", system, prompt, tool_names=[], parent_id=None,
+            max_tokens=1200, on_token=on_token,
         )
-        if result.text:
+        if not result.text:
+            degraded = result.error or f"model returned no text ({result.stopped})"
+        else:
             cleaned, unsourced = strip_unsourced(result.text, observations)
             # The model's prose only replaces the template if it survived the audit with
             # something substantial left. Otherwise the template stands.
-            if cleaned and len(cleaned) >= 0.4 * len(result.text):
-                if answer_kind == "INFORMATIONAL" and not answers_the_question(
-                    cleaned, extras
-                ):
-                    # It wrote about the verdict instead of the question. The template
-                    # carries the findings verbatim, so it is the better answer here.
-                    repairs.append("model did not answer the question; template used")
-                else:
-                    # Written by a model, so audited like one: the evidence audit above
-                    # catches an invented number, this catches a dropped invariant.
-                    text, repairs = enforce_answer_contract(
-                        humanise_verdict_codes(cleaned, language),
-                        verdict=verdict,
-                        language=language,
-                        answer_kind=answer_kind,
-                    )
-            trace = list(trace) + list(result.steps)
+            if not cleaned or len(cleaned) < 0.4 * len(result.text):
+                degraded = f"model prose failed the evidence audit ({unsourced})"
+            elif answer_kind == "INFORMATIONAL" and not answers_the_question(
+                cleaned, extras
+            ):
+                # It wrote about the verdict instead of the question. The template
+                # carries the findings verbatim, so it is the better answer here.
+                degraded = "model did not answer the question"
+                repairs.append("model did not answer the question; template used")
+            else:
+                # Written by a model, so audited like one: the evidence audit above
+                # catches an invented number, this catches a dropped invariant.
+                text, contract_repairs = enforce_answer_contract(
+                    humanise_verdict_codes(cleaned, language),
+                    verdict=verdict,
+                    language=language,
+                    answer_kind=answer_kind,
+                )
+                repairs.extend(r for r in contract_repairs if r not in repairs)
+                written_by = "model"
+        trace = list(trace) + list(result.steps)
 
     # Final editor pass. Runs on whatever produced `text` — model prose or the template —
     # because the template is the one a demo is most likely to show and it reads like a
@@ -811,7 +860,8 @@ def compose(
     # deterministic typography cleanup inside it runs even when no model is available.
     pre_polish = text
     text, polish_steps, polish_note = polish_answer(
-        text, verdict=verdict, language=language, runtime=runtime, analytical=analytical
+        text, verdict=verdict, language=language, runtime=runtime,
+        analytical=analytical, written_by=written_by,
     )
     trace = list(trace) + polish_steps
 
@@ -860,6 +910,15 @@ def compose(
             # hidden — the console renders this next to the trace.
             "unpolished_text": pre_polish,
             "polish": polish_note,
+            # Which path wrote the words, and why it was not the model when it was not.
+            # Every query is meant to go through the model; a deterministic answer is
+            # correct and complete but is a fallback, and both UIs say so rather than
+            # letting it pass as model prose.
+            "model": {
+                "client": runtime.client.name if runtime is not None else None,
+                "written_by": written_by,
+                "degraded_reason": degraded,
+            },
             # Invariants the model-written answer dropped and this layer put back. Empty
             # on the template path and on a well-behaved model. Surfaced, never hidden —
             # a repair is a thing the console should be able to show.

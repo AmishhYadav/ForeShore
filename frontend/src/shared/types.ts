@@ -244,6 +244,18 @@ export interface QueryOutcome {
      * `text` is already this string. */
     unpolished_text?: string;
     polish?: { applied: boolean; reason: string | null };
+    /** Which path wrote `text`. Every query is meant to go through the model; a
+     * `"template"` answer is correct and carries the same verdict, evidence and trace,
+     * but it is a fallback and `degraded_reason` says why it was taken. */
+    model?: {
+      client: string | null;
+      written_by: "model" | "template";
+      degraded_reason: string | null;
+    };
+    /** Invariants a model-written answer dropped and the server put back — a restored
+     * handoff, a restored verdict sentence, a reframed opener. Empty on the template
+     * path and on a well-behaved model. */
+    contract_repairs?: string[];
     [toolPayloadKey: string]: unknown;
   };
   unsourced_numbers: string[];
@@ -252,6 +264,10 @@ export interface QueryOutcome {
   missing: string[];
   duration_ms: number;
   architecture: ArchitectureSpecialist[];
+  /** "live" or "fixture". A fixture answer replays a frozen snapshot, so it is answering
+   * about that snapshot's day — a two-day-old bulletin reads exactly like a real expiry
+   * unless the surface says which it is. Absent on an older backend; treat as "live". */
+  run_mode?: "live" | "fixture";
   /** PLAN.md Phase 7 item 4 — populated only when the question named two explicit
    * departure times ("what if I leave at 04:00 instead of 06:00") and the request
    * carried no explicit `when`. `null` on every ordinary answer. */

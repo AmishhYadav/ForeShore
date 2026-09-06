@@ -268,6 +268,20 @@ def test_a_vessel_named_after_the_port_does_not_satisfy_the_handoff_check() -> N
     assert "Rameswaram Fishing Harbour" in out
 
 
+def test_a_template_answer_says_it_is_a_template() -> None:
+    """A deterministic answer is correct and complete, but it is a fallback. The only
+    symptom used to be a suspiciously fast response in flat prose."""
+    from foreshore.agents.synthesis import compose
+
+    answer = compose(
+        query_id="q", question="Should I go out?", language="en",
+        verdict=_verdict(), tool_results=[], trace=[], runtime=None,
+    )
+    model = answer.payloads["model"]
+    assert model["written_by"] == "template"
+    assert model["degraded_reason"] == "no runtime supplied"
+
+
 def test_answers_the_question_detects_a_model_that_wrote_about_the_verdict() -> None:
     findings = ["Three vessels are within 2.4 nm of the 1974 line."]
     assert not answers_the_question("Do not go. Conditions are against you.", findings)

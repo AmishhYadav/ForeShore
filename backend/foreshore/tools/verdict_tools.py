@@ -24,6 +24,7 @@ Two responsibilities live here:
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import Any, Callable, Sequence
 
@@ -36,6 +37,13 @@ from .registry import latlon_schema, registry
 
 _EVIDENCE: dict[str, list[Observation]] = {}
 
+#: Guards ``_EVIDENCE`` and ``_OUTCOMES``. Specialists run concurrently and each writes
+#: what it gathered onto the bus, and the API serves several queries at once — a
+#: read-modify-write on a shared dict across threads is how evidence silently goes
+#: missing, and a verdict computed over a half-written bus is exactly the failure the
+#: no-unsourced-numbers invariant exists to prevent.
+_BUS_LOCK = threading.Lock()
+
 
 def record_evidence(query_id: str, observations: Sequence[Observation]) -> None:
     """Append ``observations`` (from any tool call) to the bucket for ``query_id``.
@@ -46,21 +54,24 @@ def record_evidence(query_id: str, observations: Sequence[Observation]) -> None:
     """
     if not query_id:
         return
-    bucket = _EVIDENCE.setdefault(query_id, [])
-    bucket.extend(o for o in observations if isinstance(o, Observation))
+    with _BUS_LOCK:
+        bucket = _EVIDENCE.setdefault(query_id, [])
+        bucket.extend(o for o in observations if isinstance(o, Observation))
 
 
 def evidence_for(query_id: str | None) -> list[Observation]:
     """Everything recorded for ``query_id`` so far, or ``[]`` if none / not given."""
     if not query_id:
         return []
-    return list(_EVIDENCE.get(query_id, []))
+    with _BUS_LOCK:
+        return list(_EVIDENCE.get(query_id, []))
 
 
 def clear_evidence(query_id: str) -> None:
     """Drop the bucket for ``query_id``. Called once a query is fully answered."""
-    _EVIDENCE.pop(query_id, None)
-    _OUTCOMES.pop(query_id, None)
+    with _BUS_LOCK:
+        _EVIDENCE.pop(query_id, None)
+        _OUTCOMES.pop(query_id, None)
 
 
 # --------------------------------------------------------------------------------------
@@ -79,9 +90,10 @@ _OUTCOMES: dict[str, Any] = {}
 
 def last_outcome(query_id: str | None = None) -> Any | None:
     """The VerdictOutcome for ``query_id``, or the most recent one when not given."""
-    if query_id and query_id in _OUTCOMES:
-        return _OUTCOMES[query_id]
-    return _OUTCOMES.get("__last__")
+    with _BUS_LOCK:
+        if query_id and query_id in _OUTCOMES:
+            return _OUTCOMES[query_id]
+        return _OUTCOMES.get("__last__")
 
 
 # --------------------------------------------------------------------------------------
@@ -333,9 +345,10 @@ def evaluate_verdict(
         )
 
     verdict = outcome.verdict
-    _OUTCOMES["__last__"] = outcome
-    if evidence_query_id:
-        _OUTCOMES[evidence_query_id] = outcome
+    with _BUS_LOCK:
+        _OUTCOMES["__last__"] = outcome
+        if evidence_query_id:
+            _OUTCOMES[evidence_query_id] = outcome
     payload = outcome.to_dict()
     payload["handoff"] = verdict.handoff.to_dict() if verdict.handoff else None
     payload["evidence_count"] = len(observations)

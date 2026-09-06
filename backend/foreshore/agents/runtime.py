@@ -89,6 +89,11 @@ class LLMClient:
         *,
         max_tokens: int = 2048,
         temperature: float = 0.0,
+        #: Called with each assistant text delta as it arrives, when the client and the
+        #: caller both support it. Presentation only — the returned ``LLMTurn.text`` is
+        #: still the authoritative full text, and a client that cannot stream simply
+        #: never calls it. Nothing may depend on having received deltas.
+        on_token: Callable[[str], None] | None = None,
     ) -> LLMTurn:
         raise NotImplementedError
 
@@ -117,7 +122,13 @@ class AnthropicClient(LLMClient):
         *,
         max_tokens: int = 2048,
         temperature: float = 0.0,
+        on_token: Callable[[str], None] | None = None,
     ) -> LLMTurn:
+        # Not streamed. Accepted and ignored so the runtime can pass it unconditionally;
+        # the caller's contract is that deltas are optional. Worth having if the
+        # production path ever wants them — the SDK supports it — but the streaming
+        # surface is a console nicety and this client is the one that must not break.
+        del on_token
         if not self._client:
             raise RuntimeError("Anthropic client unavailable (no ANTHROPIC_API_KEY)")
         kwargs: dict[str, Any] = {
@@ -149,6 +160,26 @@ class AnthropicClient(LLMClient):
 #: would turn a rate limit into a demo that looks hung.
 _RETRY_AFTER_DEFAULT_S = 3.0
 _RETRY_AFTER_MAX_S = 20.0
+
+#: Statuses worth trying again. A rate limit and a gateway hiccup are transient; a 400
+#: (bad schema) or a 404 (retired model) will fail identically forever and retrying one
+#: only makes the answer slower.
+_TRANSIENT_STATUSES: frozenset[int] = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+#: Attempts per model call, total. Every query is meant to go through the model, and the
+#: deterministic path is the safety net rather than the plan — but the net has to be
+#: reachable inside a demo's patience, so this is small and the backoff is capped.
+DEFAULT_LLM_ATTEMPTS = 3
+
+
+def _llm_attempts() -> int:
+    """Attempts per model call. ``FORESHORE_LLM_ATTEMPTS`` overrides; clamped to 1..5 so
+    a typo cannot make a demo hang."""
+    raw = env("FORESHORE_LLM_ATTEMPTS")
+    try:
+        return min(max(int(raw), 1), 5) if raw else DEFAULT_LLM_ATTEMPTS
+    except (TypeError, ValueError):
+        return DEFAULT_LLM_ATTEMPTS
 
 
 def _retry_after_seconds(resp: httpx.Response) -> float:
@@ -242,6 +273,7 @@ class OpenAICompatibleClient(LLMClient):
         *,
         max_tokens: int = 2048,
         temperature: float = 0.0,
+        on_token: Callable[[str], None] | None = None,
     ) -> LLMTurn:
         if not self._key:
             raise RuntimeError(
@@ -259,25 +291,49 @@ class OpenAICompatibleClient(LLMClient):
         payload.update(self.extra_payload())
         headers = {"Authorization": f"Bearer {self._key}", "Accept": "application/json"}
 
-        resp = httpx.post(self.base_url, headers=headers, json=payload, timeout=self.timeout_s)
-        if resp.status_code == 429:
-            # Free-tier request-per-minute limits are the normal failure on these
-            # endpoints, and one agent turn makes several calls. A single bounded retry
-            # turns most of them into a slower answer instead of a lost specialist. The
-            # loop above already treats a failed turn as evidence-gathering that did not
-            # happen, so this is a quality save, never a correctness one.
-            time.sleep(_retry_after_seconds(resp))
-            resp = httpx.post(
-                self.base_url, headers=headers, json=payload, timeout=self.timeout_s
-            )
-        if resp.status_code >= 400:
+        # Streaming is only ever used for the turn whose prose a person is watching being
+        # written, and only when that turn declares no tools — a streamed tool-call turn
+        # would mean reassembling partial JSON arguments across deltas for no benefit,
+        # since a tool call is not something anyone reads. Everything else takes the
+        # single-shot path below, unchanged.
+        if on_token is not None and not tools:
+            return self._stream_turn(payload, headers, on_token)
+
+        # Every query is meant to go through the model; the deterministic path is the net,
+        # not the plan. Free-tier rate limits and gateway hiccups are the normal way a
+        # turn is lost, and one query makes several calls, so a bounded retry converts
+        # most of them into a slower answer rather than a dropped specialist. A permanent
+        # error (bad schema, retired model) is not retried — it would fail identically.
+        attempts = _llm_attempts()
+        last: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = httpx.post(
+                    self.base_url, headers=headers, json=payload, timeout=self.timeout_s
+                )
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last = RuntimeError(f"{self.provider} transport: {type(exc).__name__}")
+                if attempt == attempts:
+                    raise last from exc
+                time.sleep(min(_RETRY_AFTER_DEFAULT_S * attempt, _RETRY_AFTER_MAX_S))
+                continue
+
+            if resp.status_code < 400:
+                break
+
             # The provider's own message, not an HTTPStatusError with a link to MDN. This
             # string reaches the console's `missing` list, so it has to say what actually
             # went wrong ("model X is no longer available", "quota exceeded") rather than
             # what HTTP 400 means in general.
-            raise RuntimeError(
+            last = RuntimeError(
                 f"{self.provider} HTTP {resp.status_code}: {_provider_error(resp)}"
             )
+            if resp.status_code not in _TRANSIENT_STATUSES or attempt == attempts:
+                raise last
+            time.sleep(min(_retry_after_seconds(resp) * attempt, _RETRY_AFTER_MAX_S))
+        else:  # pragma: no cover — the loop always breaks or raises
+            raise last or RuntimeError(f"{self.provider}: no response")
+
         data = resp.json()
         message = data["choices"][0]["message"]
         text = (message.get("content") or "").strip()
@@ -298,6 +354,68 @@ class OpenAICompatibleClient(LLMClient):
             "tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens",
         }.get(finish, finish)
         return LLMTurn(text=text, tool_calls=calls, stop_reason=stop_reason, raw=data)
+
+
+    def _stream_turn(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        on_token: Callable[[str], None],
+    ) -> LLMTurn:
+        """One turn over SSE, calling ``on_token`` per text delta.
+
+        Deliberately not retried. The single-shot path retries because a lost turn costs
+        a specialist; here the caller has already begun showing text to a person, and
+        replaying a stream would make the answer visibly rewrite itself. A stream that
+        fails mid-flight raises, the orchestrator records it, and the deterministic
+        template answer ships — the same fallback as any other model failure.
+        """
+        body = {**payload, "stream": True}
+        text_parts: list[str] = []
+        finish = "stop"
+        try:
+            with httpx.stream(
+                "POST",
+                self.base_url,
+                headers={**headers, "Accept": "text/event-stream"},
+                json=body,
+                timeout=self.timeout_s,
+            ) as resp:
+                if resp.status_code >= 400:
+                    resp.read()
+                    raise RuntimeError(
+                        f"{self.provider} HTTP {resp.status_code}: {_provider_error(resp)}"
+                    )
+                for line in resp.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue          # a keep-alive or a frame we don't model
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    finish = choices[0].get("finish_reason") or finish
+                    delta = (choices[0].get("delta") or {}).get("content")
+                    if delta:
+                        text_parts.append(delta)
+                        try:
+                            on_token(delta)
+                        except Exception:  # noqa: BLE001
+                            # A disconnected viewer must not fail the answer. The full
+                            # text is still assembled and still audited below.
+                            pass
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise RuntimeError(f"{self.provider} transport: {type(exc).__name__}") from exc
+
+        stop_reason = {
+            "tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens",
+        }.get(finish, finish)
+        return LLMTurn(text="".join(text_parts).strip(), tool_calls=[], stop_reason=stop_reason)
 
 
 class NvidiaNimClient(OpenAICompatibleClient):
@@ -481,7 +599,9 @@ class ScriptedClient(LLMClient):
         *,
         max_tokens: int = 2048,
         temperature: float = 0.0,
+        on_token: Callable[[str], None] | None = None,
     ) -> LLMTurn:
+        del on_token          # nothing to stream: the scripted client writes no prose
         if self._i < len(self.script):
             step = self.script[self._i]
             self._i += 1
@@ -675,19 +795,41 @@ class AgentRuntime:
         tool_names: Sequence[str] | None = None,
         parent_id: str | None = None,
         max_tokens: int = 2048,
+        max_turns: int | None = None,
         prefill_results: Sequence[tuple[str, dict[str, Any], str | None]] = (),
+        prior_results: Sequence[ToolResult] = (),
+        on_token: Callable[[str], None] | None = None,
     ) -> RunResult:
         """Run one agent to a final answer.
 
-        ``prefill_results`` lets a planner hand a specialist a fixed tool sequence. In
-        scripted mode this is the entire plan; with a live model it seeds the context so
-        the model reasons over evidence instead of deciding what to fetch from scratch.
+        ``prefill_results`` lets a planner hand a specialist a fixed tool sequence to
+        **execute** here. ``prior_results`` is the other half of that: tool results the
+        caller has *already* executed, seeded into the context without running anything
+        again.
+
+        The orchestrator needs the second. It runs every planned tool up front, then told
+        each specialist "the results of those calls are already in your context" — and
+        passed nothing, so they were not. The specialist found an empty context and
+        re-fetched its own tools, which is where the extra model round-trips per
+        specialist came from: the prompt was writing a cheque the call did not honour.
+
+        ``max_turns`` overrides the runtime default for this call. With evidence properly
+        seeded a specialist should answer in one turn; the cap leaves room for one
+        genuine follow-up call and stops a model that keeps re-reading the same tool from
+        spending a demo's patience on it.
+
+        ``on_token`` streams assistant text deltas as they arrive, for the surface that
+        wants to show the answer being written. It is presentation only: the returned
+        ``RunResult.text`` is still the authoritative full text, and every deterministic
+        guard runs on that, after.
         """
         names = list(tool_names) if tool_names is not None else self.registry.names()
         schemas = self.registry.schemas(names)
         steps: list[TraceStep] = []
         observations: list[Observation] = []
-        results: list[ToolResult] = []
+        results: list[ToolResult] = list(prior_results)
+        observations.extend(o for r in prior_results for o in r.observations)
+        turn_budget = self.max_turns if max_turns is None else max(1, max_turns)
 
         for tool_name, args, why in prefill_results:
             if tool_name not in self.registry:
@@ -719,10 +861,17 @@ class AgentRuntime:
         error: str | None = None
         stopped = "end_turn"
 
-        while turns < self.max_turns:
+        while turns < turn_budget:
             turns += 1
             try:
-                turn = self.client.turn(system, messages, schemas, max_tokens=max_tokens)
+                # Passed only when a caller actually wants deltas, so a client that
+                # predates the parameter — a test double, or anything duck-typed onto
+                # LLMClient — keeps working. Streaming is a console nicety; the loop's
+                # compatibility with any client is the thing that must not regress.
+                extra = {"on_token": on_token} if on_token is not None else {}
+                turn = self.client.turn(
+                    system, messages, schemas, max_tokens=max_tokens, **extra
+                )
             except Exception as exc:  # noqa: BLE001 — an LLM outage must degrade, not crash
                 error = f"{type(exc).__name__}: {exc}"
                 self._record(

@@ -1523,6 +1523,61 @@
   border-radius: var(--radius-lg);
 }
 
+/* Live status line shown in place of the result header while a stream is in flight —
+   same dot-pulse idiom as .status-chip__dot, so "something is happening" reads the same
+   way across the console rather than inventing a second loading language. */
+.query-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--marine-on-surface-variant);
+}
+
+.query-status__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--marine-aqua-bright);
+  flex-shrink: 0;
+  animation: pulse 1.4s ease infinite;
+}
+
+/* The token stream renders in the same box the final answer uses (no layout jump when
+   `done` replaces it) with a quieter, reduced-opacity treatment plus a blinking caret so
+   it never reads as the finished, audited answer above it. */
+.query-result--streaming .query-result__text {
+  min-height: 1.7em;
+}
+
+.query-result__text--streaming {
+  opacity: 0.72;
+}
+
+.query-result__text--streaming::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--marine-aqua-bright);
+  animation: pulse 0.9s ease infinite;
+}
+
+.query-result__text-waiting {
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.query-result__draft-note {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  margin: -12px 0 20px;
+}
+
 .query-result__warning {
   font-size: 12px;
   color: var(--verdict-caution);
@@ -1531,6 +1586,52 @@
   padding: 10px 14px;
   border-radius: var(--radius-md);
   margin-top: 16px;
+}
+
+/* Header chips + note saying an answer came from frozen snapshots or from templates
+   rather than a model. Both are correct fallbacks, and both are invisible in the answer
+   itself — these render only when something is not the default. */
+.chip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.chip--warn {
+  color: var(--verdict-caution);
+  background: rgba(224, 168, 21, 0.1);
+  border: 1px solid rgba(224, 168, 21, 0.22);
+}
+
+.query-result__provenance {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--marine-on-surface-variant);
+  margin: -8px 0 20px;
+  padding: 10px 14px;
+  background: rgba(224, 168, 21, 0.06);
+  border: 1px solid rgba(224, 168, 21, 0.14);
+  border-radius: var(--radius-md);
+}
+
+.query-result__provenance p {
+  margin: 0;
+}
+
+.query-result__provenance p + p {
+  margin-top: 6px;
+}
+
+.query-result__provenance code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .query-result__footer {

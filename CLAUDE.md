@@ -110,6 +110,18 @@ Enforced in code, not left to model judgment. Do not weaken them to make a demo 
 
 7. **`FORESHORE_MODE=live|fixture`.** Every source adapter respects it. Fixture mode replays
    frozen snapshots from `data/fixtures/`, so a live demo cannot die on venue wifi.
+   **Live is the operating default and fixture is the parachute**, not the other way
+   round — a frozen bulletin reports itself expired two days later and is indistinguishable
+   from a real expiry, so every answer carries `run_mode` and the console chips it.
+
+8. **Every query goes through the model; the deterministic path is the net, not the plan.**
+   `.env` is loaded at import (`config._load_env_file`, shell vars win,
+   `FORESHORE_SKIP_DOTENV=1` opts out — the test suite sets it), model calls retry
+   transient failures, and every answer reports `payloads.model.written_by`
+   (`"model"`/`"template"`) with `degraded_reason`. Nothing here weakens the fallback: a
+   template answer still carries the same verdict, evidence and trace. It just stops
+   being silent. Before this, a server started without its key answered from templates in
+   48 ms with no error anywhere and no way to tell from the output.
 
 ---
 

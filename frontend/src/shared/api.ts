@@ -53,6 +53,148 @@ export function postQuery(body: QueryRequest): Promise<QueryOutcome> {
   return request<QueryOutcome>("/api/query", { method: "POST", body: JSON.stringify(body) });
 }
 
+// -- Streaming request path ------------------------------------------------------------
+
+export interface QueryStreamHandlers {
+  onStatus?: (s: { phase: string; detail: string; query_id: string }) => void;
+  onToken?: (delta: string) => void;
+  onDone: (outcome: QueryOutcome) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * POST /api/query/stream — same body as postQuery, but the response is an SSE stream of
+ * `status` / `token` / `done` / `error` events (see docs/API.md). Parses the stream by
+ * hand (fetch + getReader + TextDecoder) rather than EventSource, since EventSource can't
+ * send a POST body.
+ *
+ * Never throws for a deliberate abort — `signal`-triggered cancellation resolves quietly.
+ * Any other failure (network error, non-2xx, a mid-stream read error) calls
+ * `handlers.onError` exactly once. Exactly one of onDone/onError fires per call, and the
+ * returned promise always settles.
+ */
+export function streamQuery(
+  body: QueryRequest,
+  handlers: QueryStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  return (async () => {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/query/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      handlers.onError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      let responseBody: unknown;
+      try {
+        responseBody = await res.json();
+      } catch {
+        try {
+          responseBody = await res.text();
+        } catch {
+          responseBody = null;
+        }
+      }
+      handlers.onError(`API ${res.status}: ${JSON.stringify(responseBody)}`);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let settled = false;
+
+    // One SSE block looks like:
+    //   event: token
+    //   data: {"delta":"..."}
+    //   <blank line>
+    // Lines can use \n or \r\n, and a read() chunk boundary can land anywhere — including
+    // mid-line inside the JSON string on `data:`. So we only ever act on a complete block
+    // (delimited by a blank line), buffering everything before that.
+    function dispatchBlock(block: string) {
+      let eventName = "message";
+      const dataLines: string[] = [];
+      for (const rawLine of block.split("\n")) {
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (dataLines.length === 0) return;
+      const raw = dataLines.join("\n");
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return; // malformed data line — skip, not fatal
+      }
+
+      switch (eventName) {
+        case "status":
+          handlers.onStatus?.(payload as { phase: string; detail: string; query_id: string });
+          break;
+        case "token":
+          handlers.onToken?.((payload as { delta: string }).delta);
+          break;
+        case "done":
+          settled = true;
+          handlers.onDone(payload as QueryOutcome);
+          break;
+        case "error":
+          settled = true;
+          handlers.onError((payload as { error: string }).error);
+          break;
+        default:
+          break;
+      }
+    }
+
+    try {
+      while (!settled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Normalise CRLF so the "\n\n" separator check below is a single case.
+        buffer = buffer.replace(/\r\n/g, "\n");
+        let sepIndex: number;
+        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, sepIndex);
+          buffer = buffer.slice(sepIndex + 2);
+          if (block.trim().length > 0) dispatchBlock(block);
+          if (settled) break;
+        }
+      }
+      if (!settled) {
+        // Stream ended (or loop broke) with no terminal event — treat as a hang, not a
+        // silent success, so the caller's UI doesn't sit forever on "Asking…".
+        handlers.onError("Stream ended before a result arrived.");
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (!settled) handlers.onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // already released
+      }
+    }
+  })();
+}
+
 export function postRoute(body: {
   origin_lat: number;
   origin_lon: number;

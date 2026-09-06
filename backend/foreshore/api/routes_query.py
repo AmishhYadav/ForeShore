@@ -13,10 +13,15 @@ so the boat UI can refresh a single card without paying for a full agent turn.
 
 from __future__ import annotations
 
+import json
+import queue
+import threading
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterator
+from uuid import uuid4
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..agents.orchestrator import Query, answer as run_query
@@ -76,9 +81,10 @@ class QueryRequest(BaseModel):
     use_model: bool = True
 
 
-@router.post("/query")
-def post_query(body: QueryRequest, request: Request) -> dict[str, Any]:
-    query = Query(
+def _query_from(body: QueryRequest) -> Query:
+    """One request body -> one :class:`Query`. Shared by the plain and streaming
+    endpoints so they can never drift on how a field is interpreted."""
+    return Query(
         text=body.text,
         lat=body.lat,
         lon=body.lon,
@@ -92,10 +98,101 @@ def post_query(body: QueryRequest, request: Request) -> dict[str, Any]:
         surface="console" if body.surface == "console" else "boat",
         use_model=body.use_model,
     )
-    outcome = run_query(query, traces=request.app.state.traces)
+
+
+@router.post("/query")
+def post_query(body: QueryRequest, request: Request) -> dict[str, Any]:
+    outcome = run_query(_query_from(body), traces=request.app.state.traces)
     # QueryOutcome.to_dict() is already fully JSON-safe (every nested object is its own
     # .to_dict()) — see models.AgentAnswer/Verdict/Observation/TraceStep.to_dict().
     return outcome.to_dict()
+
+
+# ------------------------------------------------------------------------------------
+# POST /api/query/stream — the same answer, watched as it is written
+# ------------------------------------------------------------------------------------
+
+
+def _sse(event: str, data: Any) -> str:
+    """One SSE frame. ``data`` is always a single JSON line, so a client can parse a
+    frame without knowing anything about the payload's shape."""
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@router.post("/query/stream")
+def post_query_stream(body: QueryRequest, request: Request) -> StreamingResponse:
+    """``POST /api/query`` with the answer streamed as it is produced.
+
+    Identical body, identical work, identical result — the ``done`` frame carries exactly
+    what the non-streaming endpoint returns. What this adds is visibility: phase updates
+    while the tools and specialists run, then the synthesis model's text deltas as they
+    arrive, so a 12-second answer starts appearing in about two.
+
+    **The streamed tokens are a draft.** Every deterministic guard runs after the model
+    finishes — the unsourced-number audit can strip a sentence, the answer contract can
+    restore a dropped handoff, the ceiling wording is re-checked — so the text a viewer
+    watched being typed may not be the text that ships. ``done.text`` is authoritative
+    and the client replaces rather than appends. Streaming is presentation; the audit is
+    the product.
+
+    ``answer`` is synchronous and CPU/network-bound, so it runs on a worker thread and
+    pushes frames through a queue that the response generator drains. A viewer who
+    disconnects mid-answer does not cancel the work — the trace is still written and the
+    answer still recorded, which is what a shore console wants.
+    """
+    query = _query_from(body)
+    traces = request.app.state.traces
+    frames: "queue.Queue[str | None]" = queue.Queue(maxsize=512)
+
+    def emit(frame: str) -> None:
+        try:
+            frames.put(frame, timeout=5.0)
+        except queue.Full:
+            pass          # a viewer too slow to drain must not stall the answer
+
+    def work() -> None:
+        try:
+            outcome = run_query(
+                query,
+                traces=traces,
+                on_status=lambda phase, detail: emit(
+                    _sse("status", {"phase": phase, "detail": detail,
+                                    "query_id": query.query_id})
+                ),
+                on_token=lambda delta: emit(_sse("token", {"delta": delta})),
+            )
+            emit(_sse("done", outcome.to_dict()))
+        except Exception as exc:  # noqa: BLE001 — the stream reports, it never 500s midway
+            emit(_sse("error", {"error": f"{type(exc).__name__}: {exc}"}))
+        finally:
+            frames.put(None)
+
+    # The query id is fixed here rather than inside `answer` so the very first `status`
+    # frame can carry it — the console needs it to offer "view trace" before the answer
+    # has finished arriving.
+    query.query_id = query.query_id or str(uuid4())
+    threading.Thread(target=work, name="foreshore-query-stream", daemon=True).start()
+
+    def generate() -> Iterator[str]:
+        yield _sse("status", {"phase": "planning", "detail": "Planning the query.",
+                              "query_id": query.query_id})
+        while True:
+            frame = frames.get()
+            if frame is None:
+                return
+            yield frame
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Nginx and friends buffer text/event-stream by default, which turns a live
+            # stream into one delivery at the end.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ------------------------------------------------------------------------------------

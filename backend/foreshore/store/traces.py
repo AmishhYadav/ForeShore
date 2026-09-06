@@ -25,6 +25,7 @@ root instead of being dropped or hanging the inspector.
 from __future__ import annotations
 
 import math
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -193,6 +194,8 @@ class TraceStore:
     def __init__(self, path: Path | None = None, dsn: str | None = None) -> None:
         self._path = path or _DEFAULT_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        #: Guards the JSONL append and the Postgres connection — see `append`.
+        self._lock = threading.Lock()
         self._conn: Any | None = None
         backends = ["jsonl"]
         resolved_dsn = dsn or env("FORESHORE_PG_DSN")
@@ -228,22 +231,30 @@ class TraceStore:
                 pass
 
     def append(self, step: TraceStep) -> None:
-        self._write_lines([step])
-        if self._conn is not None:
-            try:
-                _pg_insert(self._conn, step)
-            except Exception:
-                self._drop_postgres()
-
-    def append_many(self, steps: list[TraceStep]) -> None:
-        self._write_lines(steps)
-        if self._conn is not None:
-            for s in steps:
+        # Specialists run concurrently (orchestrator step 2) and the push loop writes from
+        # its own thread, so several threads append to this file and this connection at
+        # once. A multi-line append is not atomic and a psycopg connection is not
+        # thread-safe; one lock around both writes costs nothing next to a model call and
+        # keeps the trace — the artifact the whole explainability claim rests on —
+        # uncorrupted.
+        with self._lock:
+            self._write_lines([step])
+            if self._conn is not None:
                 try:
-                    _pg_insert(self._conn, s)
+                    _pg_insert(self._conn, step)
                 except Exception:
                     self._drop_postgres()
-                    break
+
+    def append_many(self, steps: list[TraceStep]) -> None:
+        with self._lock:
+            self._write_lines(steps)
+            if self._conn is not None:
+                for s in steps:
+                    try:
+                        _pg_insert(self._conn, s)
+                    except Exception:
+                        self._drop_postgres()
+                        break
 
     # -- reads ------------------------------------------------------------------------------
 

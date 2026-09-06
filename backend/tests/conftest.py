@@ -7,9 +7,13 @@ Two things this file guarantees before any test module is collected:
    replays frozen snapshots instead of fetching — see that module's docstring).
 2. ``FORESHORE_PG_DSN`` is unset, so :class:`foreshore.store.vectors.VectorStore` never
    attempts a live PostGIS connection and always falls back to the file backend.
+3. ``.env`` is not read at all. ``foreshore.config`` loads it at import so a plainly-
+   started server actually sees its keys; a developer's file legitimately sets
+   ``FORESHORE_PG_DSN`` and provider keys, and unsetting them here is not enough when an
+   import can put them back. The session declares that it supplies its own environment.
 
-Both are set at *import* time (module level, not inside a fixture) so they are in force
-before any test module's own top-level imports run — a test file that does
+All three are set at *import* time (module level, not inside a fixture) so they are in
+force before any test module's own top-level imports run — a test file that does
 ``from foreshore.tools import registry`` at collection time must not race the mode.
 """
 
@@ -18,6 +22,7 @@ from __future__ import annotations
 import os
 
 # -- force fixture mode / no network, before anything else imports foreshore -----------
+os.environ["FORESHORE_SKIP_DOTENV"] = "1"
 os.environ["FORESHORE_MODE"] = "fixture"
 os.environ.pop("FORESHORE_PG_DSN", None)
 

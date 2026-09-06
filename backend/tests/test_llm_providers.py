@@ -181,3 +181,100 @@ def test_provider_errors_are_one_short_line() -> None:
 
 def test_a_non_json_error_body_still_yields_a_string() -> None:
     assert _provider_error(httpx.Response(502, text="<html>bad gateway</html>"))
+
+
+# ---------------------------------------------------------------------------------------
+# Retry — every query is meant to go through the model
+# ---------------------------------------------------------------------------------------
+
+
+def _stub_posts(
+    monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]
+) -> list[int]:
+    """Serve `responses` in order; record how many calls were made."""
+    calls: list[int] = []
+    queue = list(responses)
+
+    def fake_post(*_a, **_kw) -> httpx.Response:
+        calls.append(1)
+        return queue.pop(0) if queue else responses[-1]
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    return calls
+
+
+def _ok() -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "fine"}, "finish_reason": "stop"}]},
+    )
+
+
+def _turn(client) -> object:
+    return client.turn("sys", [{"role": "user", "content": "hi"}], [])
+
+
+def test_a_rate_limit_is_retried_rather_than_dropping_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deterministic path is the safety net, not the plan. A free-tier 429 should
+    cost a slower answer, not a lost specialist."""
+    monkeypatch.setenv("NVIDIA_API_KEY", "k")
+    calls = _stub_posts(
+        monkeypatch, [httpx.Response(429, json={"error": {"message": "quota"}}), _ok()]
+    )
+    assert _turn(NvidiaNimClient()).text == "fine"
+    assert len(calls) == 2
+
+
+def test_a_permanent_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 404 for a retired model fails identically forever; retrying only makes the
+    fallback slower."""
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    calls = _stub_posts(
+        monkeypatch,
+        [httpx.Response(404, json=[{"error": {"message": "no longer available"}}])],
+    )
+    with pytest.raises(RuntimeError, match="no longer available"):
+        _turn(GeminiClient())
+    assert len(calls) == 1
+
+
+def test_retries_are_bounded_and_then_raise_the_providers_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "k")
+    monkeypatch.setenv("FORESHORE_LLM_ATTEMPTS", "3")
+    calls = _stub_posts(monkeypatch, [httpx.Response(503, json={"error": "upstream"})])
+    with pytest.raises(RuntimeError, match="upstream"):
+        _turn(NvidiaNimClient())
+    assert len(calls) == 3
+
+
+def test_a_transport_failure_is_retried_then_surfaces_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "k")
+    monkeypatch.setenv("FORESHORE_LLM_ATTEMPTS", "2")
+    calls: list[int] = []
+
+    def fake_post(*_a, **_kw):
+        calls.append(1)
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    with pytest.raises(RuntimeError, match="transport"):
+        _turn(NvidiaNimClient())
+    assert len(calls) == 2
+
+
+def test_attempt_count_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo in the env must not make a demo hang."""
+    from foreshore.agents.runtime import _llm_attempts
+
+    monkeypatch.setenv("FORESHORE_LLM_ATTEMPTS", "500")
+    assert _llm_attempts() == 5
+    monkeypatch.setenv("FORESHORE_LLM_ATTEMPTS", "not-a-number")
+    assert _llm_attempts() == 3
