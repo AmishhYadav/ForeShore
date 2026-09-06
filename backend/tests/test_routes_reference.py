@@ -33,6 +33,7 @@ def _seed_trace(store: TraceStore) -> str:
         query_id,
         agent="Planner",
         kind="plan",
+        args={"text": "Can I go out today near Rameswaram?", "surface": "boat"},
         why="seed trace for routes_reference tests",
     )
     store.append(root)
@@ -45,6 +46,14 @@ def _seed_trace(store: TraceStore) -> str:
         parent_id=root.step_id,
     )
     store.append(child)
+    ceiling = new_step(
+        query_id,
+        agent="RiskAssessment",
+        kind="ceiling",
+        args={"level": "GO_WITH_CAUTION", "downgraded_from": None, "rules_fired": []},
+        parent_id=root.step_id,
+    )
+    store.append(ceiling)
     return query_id
 
 
@@ -137,6 +146,17 @@ def test_get_traces_and_trace_tree(tmp_path):
     body = resp.json()
     assert "queries" in body
     assert any(q["query_id"] == query_id for q in body["queries"])
+
+    row = next(q for q in body["queries"] if q["query_id"] == query_id)
+    assert set(row) >= {
+        "query_id", "started_at", "agents", "step_count", "tools",
+        "question", "surface", "verdict", "duration_ms", "tool_ms", "ok",
+    }
+    assert row["question"] == "Can I go out today near Rameswaram?"
+    assert row["surface"] == "boat"
+    assert row["verdict"] == "GO_WITH_CAUTION"
+    assert row["duration_ms"] >= 0
+    assert row["ok"] is True
 
     resp2 = client.get(f"/api/trace/{query_id}")
     assert resp2.status_code == 200

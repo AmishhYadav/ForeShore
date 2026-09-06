@@ -350,6 +350,11 @@
   border-radius: var(--radius-full);
   font-weight: 600;
   z-index: 5;
+  max-width: 60%;
+}
+
+.fm-tile-warning--info {
+  background: rgba(45, 212, 191, 0.9);
 }
 
 .fm-banner {
@@ -370,112 +375,368 @@
 
 /* ── Fleet Map Legend ──────────────────────────────────────────────────────── */
 
+/* Swatch + name only, in columns, so the card stays short enough that it can never
+   reach the top-left corner of the map (where the tile/basemap warnings live). It is
+   also collapsible — one click leaves just the header pill. */
 .fm-legend {
   position: absolute;
   bottom: 40px;
   left: 12px;
-  padding: 12px 16px;
-  background: rgba(6, 19, 31, 0.85);
+  display: flex;
+  flex-direction: column;
+  background: rgba(6, 19, 31, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: var(--radius-lg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
   font-size: 11px;
   color: var(--marine-on-surface-variant);
   z-index: 5;
-  max-width: 240px;
+  overflow: hidden;
+  max-height: calc(100% - 88px);
 }
 
-.fm-legend__group {
-  margin-bottom: 10px;
+.fm-legend__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface);
+  transition: color var(--duration-fast) ease;
 }
 
-.fm-legend__group:last-child {
-  margin-bottom: 0;
+.fm-legend__toggle:hover {
+  color: var(--marine-aqua-bright);
+}
+
+/* Chevron drawn from borders rather than a glyph — no font dependency, and it can be
+   rotated to encode open/closed without swapping any text. */
+.fm-legend__chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  transition: transform var(--duration-fast) ease;
+}
+
+.fm-legend--collapsed .fm-legend__chevron {
+  transform: rotate(-135deg) translate(-1px, -1px);
+}
+
+.fm-legend__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+  padding: 4px 12px 10px;
+  /* min-height:0 is what lets the card's max-height actually bite: without it this grid
+     refuses to shrink below its content and the card overflows the map upwards. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .fm-legend__heading {
   font-weight: 700;
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: 9px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--marine-on-surface);
-  margin-bottom: 6px;
+  opacity: 0.55;
+  margin-bottom: 5px;
 }
 
 .fm-legend__item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 3px;
+  gap: 7px;
+  padding: 1px 0;
+}
+
+.fm-legend__label {
+  white-space: nowrap;
 }
 
 .fm-legend__swatch {
   display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
 .fm-legend__swatch--dashed {
   background: none;
-  border: 2px dashed;
+  border: 1.5px dashed;
 }
 
-.fm-legend__note {
+.fm-legend__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.fm-legend__stat {
   font-size: 10px;
-  opacity: 0.6;
-  margin-top: 4px;
-  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--marine-on-surface);
+  white-space: nowrap;
+}
+
+.fm-legend__stat--muted {
+  opacity: 0.55;
+}
+
+.fm-legend__stat--alert {
+  color: var(--verdict-caution);
+  border-color: rgba(224, 168, 21, 0.35);
+  background: rgba(224, 168, 21, 0.12);
+}
+
+@media (max-width: 1280px) {
+  .fm-legend__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ── Fleet Map Vessel Markers ──────────────────────────────────────────────── */
 
+/* MapLibre anchors this box's CENTRE on the vessel's lat/lon (`anchor: "center"` sets an
+   inline `translate(-50%,-50%)`), so the box must be exactly the hull glyph and nothing
+   else — every child is taken out of flow. A child left in normal flow (the name label
+   used to be) grows the box and shifts the hull off the true position by a fixed pixel
+   amount, which reads as the boat sliding across the chart as you zoom, because a fixed
+   pixel offset covers less and less ground the further you zoom in. */
 .fm-vessel-marker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  position: relative;
+  width: 20px;
+  height: 24px;
   pointer-events: auto;
   cursor: pointer;
+  z-index: 3;
 }
 
-.fm-vessel-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  z-index: 2;
-  transition: transform var(--duration-fast) ease;
-}
-
-.fm-vessel-marker:hover .fm-vessel-dot {
-  transform: scale(1.3);
-}
-
-.fm-vessel-heading {
+/* Dashed ring behind every vessel icon — a constant, non-decorative reminder that this
+   is a simulated position, not a live AIS solid-ring convention. Present on every marker
+   regardless of hover/zoom, since the label text alone is easy to miss at a glance. */
+.fm-vessel-sim-ring {
   position: absolute;
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 10px solid rgba(255, 255, 255, 0.4);
-  top: -12px;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.55);
+  animation: fm-sim-ring-spin 12s linear infinite;
+}
+
+@keyframes fm-sim-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Heading arrives as the `--fm-heading` custom property (set by FleetMap.tsx), so the
+   hover state can compose scale on top of it instead of overriding the rotation. */
+.fm-vessel-boat {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform: rotate(var(--fm-heading, 0deg));
+  transform-origin: 50% 50%;
+  transition: transform var(--duration-fast) ease;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.fm-vessel-marker:hover .fm-vessel-boat {
+  transform: rotate(var(--fm-heading, 0deg)) scale(1.25);
+}
+
+/* ── Fleet Map Vessel Selection ────────────────────────────────────────────── */
+
+/* Selection halo. Drawn on the marker box itself (which is exactly the hull glyph) so it
+   is centred on the vessel's real position, and sized with a transform from that centre
+   so it cannot reintroduce the layout offset the marker box was trimmed to avoid. */
+.fm-vessel-marker--selected::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  border: 2px solid var(--marine-aqua-bright);
+  box-shadow: 0 0 14px rgba(45, 212, 191, 0.5);
+  animation: fm-selected-pulse 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes fm-selected-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(1.12);
+  }
+}
+
+.fm-vessel-marker--selected .fm-vessel-label {
+  background: var(--marine-aqua-bright);
+  color: var(--marine-navy);
+  font-weight: 700;
+}
+
+/* The rest of the fleet steps back while one vessel is focused, but never disappears —
+   an operator must still see where the other boats are. */
+.fm-vessel-marker--dimmed {
+  opacity: 0.45;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.fm-vessel-marker--dimmed:hover {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fm-vessel-marker--selected::after {
+    animation: none;
+  }
+  .fm-vessel-sim-ring {
+    animation: none;
+  }
 }
 
 .fm-vessel-label {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 9px;
   font-weight: 600;
   color: var(--marine-on-surface);
-  background: rgba(6, 19, 31, 0.7);
+  background: rgba(6, 19, 31, 0.72);
   padding: 1px 5px;
   border-radius: 3px;
-  margin-top: 4px;
   white-space: nowrap;
   letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+/* ── Fleet Map Harbour / Landing-Centre Markers ─────────────────────────────── */
+
+/* The ~137 landing centres are a GL `circle` layer on the map canvas, not DOM markers
+   (see the `landing-centres` layer in FleetMap.tsx for why), so they have no CSS of
+   their own. The only harbour icon left in the DOM is the legend's, below. */
+
+.fm-legend__harbour-icon {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.fm-legend__harbour-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* ── Fleet Map Popups ──────────────────────────────────────────────────────── */
+
+/* maplibre-gl.css ships `.maplibregl-popup-content { background: #fff }`, and this
+   console's body text token is #e4e2e3 — near-white text on a white card, which is why
+   the vessel and landing-centre popups came up effectively blank. Theming the popup to
+   the console's own dark glass fixes the contrast and stops a white box flashing over a
+   dark chart.
+   The selectors are scoped under `.fm-wrap` on purpose, for specificity as much as for
+   scope: maplibre-gl.css is imported from FleetMap.tsx and therefore lands AFTER
+   console.css in the bundle, so a bare `.maplibregl-popup-content` here would lose to it
+   on source order. Two classes (0,2,0) beats one (0,1,0) regardless of order. */
+.fm-wrap {
+  /* One value for the popup ground, so the card and its eight tip variants can never
+     drift apart. Fully opaque, not a near-opaque wash: the popup has to cover the chart
+     and the other vessel markers underneath it, and at 0.97 the hulls behind it still
+     ghosted through. */
+  --fm-popup-bg: #091a28;
+}
+
+/* MapLibre gives `.maplibregl-popup` no z-index at all, and markers none either — they
+   are siblings in the canvas container, so paint order is DOM order. `.fm-vessel-marker`
+   below sets `z-index: 3` (to sit above the landing-centre dots), which is enough to lift
+   every marker above an open popup: the other boats drew on top of the card. The popup
+   therefore has to name a level above the markers explicitly. */
+.fm-wrap .maplibregl-popup {
+  z-index: 10;
+}
+
+.fm-wrap .maplibregl-popup-content {
+  background: var(--fm-popup-bg);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+  padding: 12px 14px;
+  color: var(--marine-on-surface);
+}
+
+/* The tip is a CSS triangle drawn from border colours, one rule per anchor position, so
+   every one of the eight has to be repainted or the popup grows a white spike. */
+.fm-wrap .maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.fm-wrap .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.fm-wrap .maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--fm-popup-bg);
+}
+
+.fm-wrap .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.fm-wrap .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.fm-wrap .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--fm-popup-bg);
+}
+
+.fm-wrap .maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--fm-popup-bg);
+}
+
+.fm-wrap .maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--fm-popup-bg);
+}
+
+.fm-wrap .maplibregl-popup-close-button {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  color: var(--marine-on-surface-variant);
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.fm-wrap .maplibregl-popup-close-button:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--ink-50);
+}
 
 .fm-popup {
   font-family: var(--font-body);
@@ -516,128 +777,643 @@
   width: 45%;
 }
 
-/* ── Alert Queue ───────────────────────────────────────────────────────────── */
-
-.alert-queue {
-  padding: 16px;
+.fm-popup td {
+  color: var(--ink-50);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.alert-queue__heading {
+.fm-popup tr:last-child th,
+.fm-popup tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Alert Queue ───────────────────────────────────────────────────────────── */
+
+/* The console's right-hand pane. Every alert is one card built from the same five
+   bands in the same order — level/kind/age, vessel, headline, prose, then the measured
+   values in a fixed three-column strip — so an operator scanning the queue reads each
+   card by position rather than re-parsing a run-on line of "Distance: … ETA: … 18:42". */
+
+.alert-queue {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.alert-queue__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(6, 19, 31, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.alert-queue__title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alert-queue__title {
   font-family: var(--font-headline);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--ink-50);
-  margin: 0 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 0;
+}
+
+.alert-queue__total {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-queue__counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.count-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.count-box__value {
+  font-family: var(--font-headline);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink-50);
+  font-variant-numeric: tabular-nums;
+}
+
+.count-box__label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.count-box--warn {
+  background: rgba(224, 168, 21, 0.09);
+  border-color: rgba(224, 168, 21, 0.28);
+}
+
+.count-box--warn .count-box__value {
+  color: var(--verdict-caution);
+}
+
+.count-box--stop {
+  background: rgba(217, 72, 63, 0.1);
+  border-color: rgba(217, 72, 63, 0.3);
+}
+
+.count-box--stop .count-box__value {
+  color: var(--verdict-stop);
+}
+
+.count-box--ok .count-box__value {
+  color: var(--verdict-go);
+}
+
+.count-box--idle .count-box__value {
+  color: var(--marine-on-surface-variant);
+}
+
+/* Focused-vessel chip — also the affordance for getting back to the whole-fleet queue. */
+.alert-queue__focus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  border-radius: var(--radius-md);
+  background: rgba(27, 163, 163, 0.1);
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.alert-queue__focus:hover {
+  background: rgba(27, 163, 163, 0.18);
+  border-color: rgba(45, 212, 191, 0.6);
+}
+
+.alert-queue__focus-label {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--marine-aqua-bright);
+}
+
+.alert-queue__focus-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-50);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-queue__focus-count {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-queue__focus-clear {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-queue__focus:hover .alert-queue__focus-clear {
+  color: var(--ink-50);
+}
+
+.alert-queue__empty--focus {
+  padding: 16px 0 4px;
+  opacity: 0.7;
+}
+
+.alert-queue__operator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alert-queue__operator label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.alert-queue__operator input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ink-50);
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.alert-queue__operator input:focus {
+  border-color: var(--marine-aqua);
+  box-shadow: 0 0 0 3px rgba(27, 163, 163, 0.15);
+}
+
+.alert-queue__explainer {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.85;
+}
+
+.alert-queue__explainer strong {
+  color: var(--marine-on-surface);
+  font-weight: 700;
+}
+
+.alert-queue__ack-error {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--verdict-stop);
+  background: rgba(217, 72, 63, 0.12);
+  border: 1px solid rgba(217, 72, 63, 0.35);
+  border-radius: var(--radius-md);
 }
 
 .alert-queue__list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding: 12px 16px 20px;
+  flex: 1 1 auto;
 }
 
-.alert-queue__item {
-  padding: 12px 16px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: var(--radius-md);
-  transition: all var(--duration-fast) ease;
+/* ── Acknowledged log ──────────────────────────────────────────────────────── */
+
+.alert-ack-log {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  background: rgba(6, 19, 31, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.alert-queue__item:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-.alert-queue__item--unacked {
-  border-left: 3px solid var(--verdict-caution);
-}
-
-.alert-queue__item--acked {
-  opacity: 0.5;
-}
-
-.alert-queue__item-header {
+.alert-ack-log__toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+  transition: background var(--duration-fast) ease;
 }
 
-.alert-queue__level {
+.alert-ack-log__toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.alert-ack-log__title {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-ack-log__count {
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: var(--radius-full);
+  color: var(--verdict-go);
+  background: rgba(31, 163, 122, 0.15);
+  border: 1px solid rgba(31, 163, 122, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-ack-log__chevron {
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--marine-on-surface-variant);
+  border-bottom: 1.5px solid var(--marine-on-surface-variant);
+  transform: rotate(-135deg);
+  transition: transform var(--duration-fast) ease;
+}
+
+.alert-ack-log__chevron--open {
+  transform: rotate(45deg);
+}
+
+.alert-ack-log__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 14px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.alert-ack-log__row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+}
+
+.alert-ack-log__level {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  align-self: center;
+}
+
+.alert-ack-log__vessel {
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.06em;
-}
-
-.alert-queue__level--WARN {
-  background: rgba(224, 168, 21, 0.2);
-  color: var(--verdict-caution);
-}
-
-.alert-queue__level--CRITICAL {
-  background: rgba(217, 72, 63, 0.2);
-  color: var(--verdict-stop);
-}
-
-.alert-queue__level--INFO {
-  background: rgba(79, 163, 209, 0.15);
-  color: var(--severity-advisory);
-}
-
-.alert-queue__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-50);
-}
-
-.alert-queue__body {
-  font-size: 12px;
-  color: var(--marine-on-surface-variant);
-  line-height: 1.4;
-  margin-bottom: 8px;
-}
-
-.alert-queue__footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.alert-queue__time {
-  font-size: 11px;
-  color: var(--marine-on-surface-variant);
-  opacity: 0.6;
-}
-
-.alert-queue__ack-btn {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 12px;
-  border: 1px solid var(--marine-aqua);
-  border-radius: var(--radius-full);
-  background: transparent;
+  text-transform: uppercase;
   color: var(--marine-aqua-bright);
-  cursor: pointer;
-  transition: all var(--duration-fast) ease;
 }
 
-.alert-queue__ack-btn:hover {
-  background: rgba(27, 163, 163, 0.15);
+.alert-ack-log__what {
+  grid-column: 2;
+  color: var(--marine-on-surface);
+}
+
+.alert-ack-log__by {
+  grid-column: 2;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 
 .alert-queue__empty {
   font-size: 13px;
   color: var(--marine-on-surface-variant);
   text-align: center;
-  padding: 24px;
+  padding: 32px 0;
   opacity: 0.5;
+}
+
+/* ── Alert card ────────────────────────────────────────────────────────────── */
+
+.alert-row {
+  position: relative;
+  padding: 12px 14px 12px 18px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease,
+    opacity var(--duration-fast) ease;
+}
+
+.alert-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.13);
+}
+
+/* Focused vessel: the card the operator picked, on the map or in this queue. Paired with
+   the same aqua the map marker's selection halo uses, so the two panes read as one
+   selection rather than two coincidental highlights. */
+.alert-row--selected {
+  background: rgba(27, 163, 163, 0.08);
+  border-color: rgba(45, 212, 191, 0.45);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.18);
+}
+
+.alert-row--selected .alert-row__vessel-dot {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Other vessels stay in the queue (a BREACH elsewhere must never be filtered away) but
+   step back visually, and come straight back on hover. */
+.alert-row--dimmed {
+  opacity: 0.42;
+}
+
+.alert-row--dimmed:hover {
+  opacity: 1;
+}
+
+/* A slim inset rail rather than a full-height border on the card edge — it reads as a
+   status indicator tied to the level badge beside it, not as a decorative accent stripe. */
+.alert-row__rail {
+  position: absolute;
+  left: 7px;
+  top: 13px;
+  bottom: 13px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--alert-level-color, var(--ink-500));
+}
+
+.alert-row--acked {
+  opacity: 0.55;
+}
+
+.alert-row--acked:hover {
+  opacity: 0.8;
+}
+
+.alert-row__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.alert-row__level {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  color: var(--alert-level-color, var(--ink-500));
+  background: color-mix(in srgb, var(--alert-level-color, #2c7196) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--alert-level-color, #2c7196) 40%, transparent);
+}
+
+.alert-row__kind {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-row__time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-row__vessel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marine-aqua-bright);
+  margin-bottom: 4px;
+}
+
+.alert-row__vessel-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+
+.alert-row__title {
+  font-family: var(--font-headline);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink-50);
+  margin: 0 0 4px;
+}
+
+.alert-row__body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--marine-on-surface-variant);
+  margin: 0 0 10px;
+}
+
+.alert-row__class {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 9px 3px 7px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-full);
+  color: var(--marine-on-surface);
+  background: color-mix(in srgb, var(--severity-color, #4fa3d1) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--severity-color, #4fa3d1) 35%, transparent);
+}
+
+.alert-row__class-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--severity-color, var(--severity-advisory));
+  flex-shrink: 0;
+}
+
+/* Fixed three-column strip: the measured values always sit in the same place on every
+   card, so distances and ETAs can be compared down the queue at a glance. */
+.alert-row__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.alert-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  background: rgba(6, 19, 31, 0.72);
+}
+
+.alert-metric dt {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+}
+
+.alert-metric dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-50);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The named human authority an abstention hands off to (CLAUDE.md invariant 2) — given
+   its own box so it can never be mistaken for part of the advisory prose above it. */
+.alert-row__handoff {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(45, 212, 191, 0.07);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+.alert-row__handoff-label {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--marine-aqua-bright);
+}
+
+.alert-row__handoff-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-50);
+}
+
+.alert-row__handoff-contact,
+.alert-row__handoff-dist {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-row__handoff-contact::before,
+.alert-row__handoff-dist::before {
+  content: "·";
+  margin-right: 6px;
+  opacity: 0.5;
+}
+
+.alert-row__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.alert-row__acked {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-row__acked strong {
+  color: var(--marine-on-surface);
+  font-weight: 600;
+}
+
+.alert-row__ack {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 14px;
+  border: 1px solid rgba(27, 163, 163, 0.55);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--marine-aqua-bright);
+  cursor: pointer;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.alert-row__ack:hover:not(:disabled) {
+  background: rgba(27, 163, 163, 0.18);
+  border-color: var(--marine-aqua-bright);
+}
+
+.alert-row__ack:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ── Analyst Query ─────────────────────────────────────────────────────────── */
@@ -863,6 +1639,9 @@
 }
 
 /* ── Trace Inspector ───────────────────────────────────────────────────────── */
+/* Left rail: one card per query. Right pane: sticky header + ordered phase
+   sections. See TraceInspector.tsx's module docstring for the grouping rules
+   this styles — nothing here changes what data is shown, only its layout. */
 
 .trace-inspector {
   display: grid;
@@ -896,24 +1675,26 @@
 
 .trace-inspector__detail {
   overflow-y: auto;
-  padding: 16px 24px;
+  overflow-x: hidden;
+  padding: 0 24px 24px;
 }
+
+/* -- Left rail query card ---------------------------------------------------- */
 
 .trace-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   padding: 10px 12px;
-  border: none;
   background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
   width: 100%;
   text-align: left;
   margin-bottom: 4px;
   color: var(--marine-on-surface-variant);
-  transition: all var(--duration-fast) ease;
-  border: 1px solid transparent;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
 }
 
 .trace-row:hover {
@@ -926,159 +1707,438 @@
   color: var(--marine-on-surface);
 }
 
-.trace-row__id {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: monospace;
+.trace-row__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .trace-row__time {
   font-size: 11px;
   opacity: 0.6;
+  white-space: nowrap;
 }
 
-.trace-row__steps {
+.trace-row__question {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--marine-on-surface);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.trace-row__question--fallback {
+  font-family: monospace;
+  font-weight: 600;
+  font-size: 12px;
+  opacity: 0.75;
+  -webkit-line-clamp: 1;
+}
+
+.trace-row__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 11px;
-  color: var(--marine-aqua-bright);
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
 }
 
-.trace-row__agents {
-  font-size: 10px;
-  opacity: 0.5;
+.trace-row__surface {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--marine-on-surface-variant);
+  opacity: 1;
+}
+
+.trace-row__fail {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--verdict-stop);
+  opacity: 1;
+}
+
+/* -- Verdict pill, shared by the left rail and the detail header ------------- */
+
+.trace-verdict-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.trace-verdict-pill--sm {
+  font-size: 9px;
+  padding: 2px 7px;
 }
 
 /* ── Trace Timeline ────────────────────────────────────────────────────────── */
+/* The right pane's phase-grouped detail view: sticky header, then Plan /
+   Evidence gathered / Verdict / Advisory ceiling / Synthesis / Errors / Other
+   steps sections, each a stack of cards. */
 
-.trace-timeline {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.trace-detail__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-top: 16px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  background: var(--ink-950);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.trace-timeline--nested {
-  padding-left: 16px;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-  margin-top: 8px;
-}
-
-.trace-step {
-  margin-bottom: 12px;
-}
-
-.trace-step__row {
+.trace-detail__top {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
-.trace-step__agent {
-  font-size: 12px;
+.trace-detail__question {
+  font-family: var(--font-headline);
+  font-size: 18px;
   font-weight: 600;
-  color: var(--ink-50);
-}
-
-.trace-step__tool {
-  font-size: 12px;
-  color: var(--marine-aqua-bright);
-  font-family: monospace;
-}
-
-.trace-step__duration {
-  font-size: 11px;
-  color: var(--marine-on-surface-variant);
-}
-
-.trace-step__ts {
-  font-size: 11px;
-  color: var(--marine-on-surface-variant);
-  opacity: 0.5;
-}
-
-.trace-step__why {
-  font-size: 12px;
-  color: var(--marine-on-surface-variant);
-  font-style: italic;
-  margin-top: 4px;
-}
-
-.trace-step__args {
-  font-size: 11px;
-  color: var(--marine-on-surface-variant);
-  opacity: 0.6;
-  font-family: monospace;
-  margin-top: 4px;
-  word-break: break-all;
-}
-
-.trace-step__digest {
-  font-size: 12px;
+  line-height: 1.35;
   color: var(--marine-on-surface);
-  margin-top: 4px;
-  line-height: 1.5;
+  margin: 0;
+  max-width: 640px;
 }
 
-.trace-step__error {
+.trace-detail__meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+}
+
+.trace-detail__body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 8px;
+}
+
+.trace-phase {
+  /* A flex child's default min-width is `auto`, which lets a long unbroken token
+     (a digest, a raw-JSON dump) push this section wider than the pane instead of
+     wrapping inside it — this is what keeps the pane itself from scrolling sideways. */
+  min-width: 0;
+}
+
+.trace-phase__title {
+  font-family: var(--font-headline);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.trace-phase--errors .trace-phase__title {
+  color: var(--verdict-stop);
+}
+
+/* -- Card shell, shared by every phase's cards -------------------------------- */
+
+.trace-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.trace-card:last-child {
+  margin-bottom: 0;
+}
+
+.trace-card--error {
+  border-color: rgba(217, 72, 63, 0.35);
+  background: rgba(217, 72, 63, 0.05);
+}
+
+.trace-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trace-card__tool {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--marine-aqua-bright);
+}
+
+.trace-card__agent {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.trace-card__duration {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trace-card__why {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--marine-on-surface);
+  margin: 10px 0 0;
+}
+
+.trace-card__digest {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--marine-on-surface-variant);
+  margin: 10px 0 0;
+}
+
+.trace-card__error {
   font-size: 12px;
   color: var(--verdict-stop);
-  margin-top: 4px;
+  margin: 10px 0 0;
 }
 
-.trace-step__provenance {
-  margin-top: 8px;
-}
-
-.trace-step__provenance summary {
+.trace-card__note {
   font-size: 12px;
-  color: var(--marine-aqua-bright);
+  font-style: italic;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.7;
+  margin: 10px 0 0;
+}
+
+.trace-card__plan-question {
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--marine-on-surface);
+  margin: 10px 0 0;
+}
+
+.trace-card__plan-summary {
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+  margin: 10px 0 0;
+}
+
+/* -- Chips (plan intents, ceiling rules fired) -------------------------------- */
+
+.trace-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.trace-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--marine-on-surface-variant);
+}
+
+.trace-chip--rule {
+  background: rgba(224, 168, 21, 0.1);
+  color: var(--verdict-caution);
+}
+
+/* -- Ceiling downgrade readout ------------------------------------------------- */
+
+.trace-ceiling__levels {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.trace-ceiling__arrow {
+  font-size: 16px;
+  color: var(--marine-on-surface-variant);
+}
+
+/* -- Inputs / sources, collapsed side by side --------------------------------- */
+
+.trace-card__aux-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.trace-card__aux {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.trace-card__aux > summary {
   cursor: pointer;
-}
-
-.trace-step__provenance ul {
+  font-size: 11px;
+  color: var(--marine-aqua-bright);
   list-style: none;
-  padding: 8px 0 0 0;
-  margin: 0;
 }
 
-.trace-step__provenance-row {
+.trace-card__aux > summary::-webkit-details-marker {
+  display: none;
+}
+
+.trace-card__aux > summary::before {
+  content: "▸ ";
+}
+
+.trace-card__aux[open] > summary::before {
+  content: "▾ ";
+}
+
+.trace-card__kv {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.trace-card__kv-row {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.trace-card__kv-row dt {
+  flex: 0 0 auto;
+  min-width: 110px;
+  color: var(--marine-on-surface-variant);
+}
+
+.trace-card__kv-row dd {
+  margin: 0;
+  color: var(--marine-on-surface);
+  overflow-wrap: anywhere;
+}
+
+/* -- Provenance (sources) list ------------------------------------------------- */
+
+.trace-provenance-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.trace-provenance-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   font-size: 12px;
-  margin-bottom: 6px;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.02);
   border-radius: var(--radius-sm);
 }
 
-.trace-step__provenance-row--partial {
+.trace-provenance-row--partial {
   opacity: 0.5;
 }
 
-.trace-step__provenance-source {
+.trace-provenance-row__source {
   font-weight: 600;
   color: var(--ink-50);
 }
 
-.trace-step__provenance-authority {
+.trace-provenance-row__authority {
   color: var(--marine-on-surface-variant);
   font-weight: 400;
 }
 
-.trace-step__provenance-value {
+.trace-provenance-row__value {
   color: var(--marine-aqua-bright);
 }
 
-.trace-step__provenance-meta {
+.trace-provenance-row__meta {
   color: var(--marine-on-surface-variant);
   font-size: 11px;
 }
 
-.trace-step__provenance-note {
+.trace-provenance-row__note {
   font-size: 11px;
   font-style: italic;
   color: var(--marine-on-surface-variant);
+}
+
+/* -- Raw step escape hatch ------------------------------------------------------ */
+
+.trace-card__raw {
+  margin-top: 10px;
+}
+
+.trace-card__raw > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.65;
+  list-style: none;
+}
+
+.trace-card__raw > summary::-webkit-details-marker {
+  display: none;
+}
+
+.trace-card__raw > summary::before {
+  content: "▸ ";
+}
+
+.trace-card__raw[open] > summary::before {
+  content: "▾ ";
+}
+
+.trace-card__raw pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--marine-on-surface-variant);
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 /* ── Architecture Panel ────────────────────────────────────────────────────── */

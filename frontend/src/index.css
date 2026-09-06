@@ -43,6 +43,10 @@
   --pfz-derived: #7c93ff;
   --hazard-track: #ff5da2;
 
+  /* ── Fleet Map Coastline (local vector, network-independent) ───────────── */
+  --land-fill: #16405c;
+  --land-line: #2c7196;
+
   /* ── Marine Intelligence Design System (Stitch) ────────────────────────── */
   --marine-navy: #0b1f30;
   --marine-navy-deep: #06131f;

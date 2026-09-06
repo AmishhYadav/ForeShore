@@ -6,9 +6,9 @@ list), so the demo fleet the push loop tracks is synthetic by construction. Ever
 — that flag is never optional-away, because presenting a simulated position as a real one
 would not survive a single question from a judge.
 
-Two of :func:`default_fleet`'s eight boats carry scripted intent rather than a random
-heading, so that ``push/loop.py`` (built on top of this module) has a boat that
-reliably demonstrates each alert path in a short demo window:
+Two of :func:`default_fleet`'s boats (``_FLEET_SIZE`` of them) carry scripted intent
+rather than a random heading, so that ``push/loop.py`` (built on top of this module) has
+a boat that reliably demonstrates each alert path in a short demo window:
 
 * one boat is aimed at the nearest point on the ``IMBL_HISTORIC_WATERS`` line, to
   demonstrate a firing ``IMBL_HISTORIC_WATERS`` warning;
@@ -36,8 +36,10 @@ from ..store.vectors import VectorStore
 _FLEET_VESSEL_CLASS = "small_motorised"
 
 #: Fleet size the demo/push loop is built around — see the module docstring for why two
-#: of these eight carry scripted, not random, headings.
-_FLEET_SIZE = 8
+#: of these carry scripted, not random, headings. Kept deliberately small: the console's
+#: fleet map draws one DOM marker per boat over the geofence/PFZ geometry, and a denser
+#: fleet buries the two scripted boats the alert demo actually depends on.
+_FLEET_SIZE = 6
 
 #: Index (within the fleet returned by ``default_fleet``) of the boat scripted to close
 #: on the IMBL_HISTORIC_WATERS line. Always the first boat at the first anchor port.

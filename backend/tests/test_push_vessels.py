@@ -2,7 +2,8 @@
 
 Three things are under test:
 
-1. ``default_fleet()`` returns exactly the simulated fleet the push loop needs: 8 boats,
+1. ``default_fleet()`` returns exactly the simulated fleet the push loop needs
+   (``_FLEET_SIZE`` boats),
    every one flagged ``is_simulated=True`` (CLAUDE.md: never claim real-time AIS for
    Indian small boats), distinct ids, both of the region's first two anchor ports
    represented as ``home_port``.
@@ -22,7 +23,7 @@ from itertools import pairwise
 
 import pytest
 from foreshore.models import bearing_deg, haversine_nm
-from foreshore.push.vessels import _IMBL_BOAT_INDEX, advance, default_fleet
+from foreshore.push.vessels import _FLEET_SIZE, _IMBL_BOAT_INDEX, advance, default_fleet
 from foreshore.store.vectors import VectorStore
 
 # --------------------------------------------------------------------------------------
@@ -30,9 +31,9 @@ from foreshore.store.vectors import VectorStore
 # --------------------------------------------------------------------------------------
 
 
-def test_default_fleet_returns_eight_simulated_vessels():
+def test_default_fleet_returns_configured_size_all_simulated():
     fleet = default_fleet()
-    assert len(fleet) == 8
+    assert len(fleet) == _FLEET_SIZE
     for v in fleet:
         assert v.is_simulated is True
 

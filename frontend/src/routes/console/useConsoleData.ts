@@ -34,6 +34,12 @@ export interface TraceListRow {
   agents: string[];
   step_count: number;
   tools: string[];
+  question: string | null;
+  surface: string | null;
+  verdict: string | null;
+  duration_ms: number;
+  tool_ms: number;
+  ok: boolean;
   [key: string]: unknown;
 }
 
@@ -66,9 +72,23 @@ export function useConsoleData() {
   const [vesselsUpdatedAt, setVesselsUpdatedAt] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  /** Alerts acknowledged from this console since it was opened, newest first.
+   *
+   *  Session-scoped on purpose. The backend does keep every acknowledgement — the alert
+   *  stays in `AlertStore.history()` with its `acknowledged_by`/`acknowledged_at` — but
+   *  that history is an in-memory rolling log of the last 500 alerts with no count or
+   *  filter endpoint, so reading it back on every poll would mean pulling ~500 records to
+   *  derive one number. The panel labels this "this session" rather than implying a
+   *  durable total it is not showing. */
+  const [acknowledged, setAcknowledged] = useState<Alert[]>([]);
+
   const socketRef = useRef<AlertSocket | null>(null);
   const lastMessageAtRef = useRef<number>(0);
   const helloIntervalSRef = useRef<number>(10);
+  /** alert_id -> local arrival time, for alerts pushed over the socket. Read by
+   *  `refreshAlerts` to tell "the server has not heard of this yet" apart from "the
+   *  server has dropped this". */
+  const alertSeenAtRef = useRef<Map<string, number>>(new Map());
 
   const refreshTraces = useCallback(async () => {
     try {
@@ -91,13 +111,35 @@ export function useConsoleData() {
   }, []);
 
   const refreshAlerts = useCallback(async () => {
+    // Captured *before* the request goes out, so the "arrived while this poll was in
+    // flight" test below can never be satisfied by an alert the server already knew
+    // about and deliberately omitted.
+    const startedAt = Date.now();
     try {
       const res = await getAlerts({ active: true });
       setAlerts((prev) => {
-        // Merge rather than replace: a WS "alert" push that landed between polls must
-        // not be dropped by an in-flight REST response that predates it.
-        const byId = new Map(prev.map((a) => [a.alert_id, a]));
+        // The server's active set is authoritative. `AlertStore.acknowledge()` and
+        // `AlertStore.clear()` both DROP an alert from that set (see
+        // backend/foreshore/push/alerts.py), so an alert the server no longer lists has
+        // been acknowledged or has stopped applying, and must leave the queue.
+        //
+        // This previously merged into `prev` without ever removing anything, so the
+        // console accumulated every alert it had ever seen: a queue reading "79 active,
+        // 63 critical" against a backend holding 4, and an Acknowledge button whose
+        // effect the next poll silently undid.
+        const byId = new Map<string, Alert>();
         for (const a of res.alerts) byId.set(a.alert_id, a);
+        // The one thing the server's answer legitimately cannot contain: an alert pushed
+        // over the socket after this request was issued. Keep only those.
+        for (const a of prev) {
+          if (byId.has(a.alert_id)) continue;
+          if ((alertSeenAtRef.current.get(a.alert_id) ?? 0) > startedAt) byId.set(a.alert_id, a);
+        }
+        // Drop bookkeeping for alerts no longer held, so the map cannot grow unbounded
+        // across a long console session.
+        for (const id of alertSeenAtRef.current.keys()) {
+          if (!byId.has(id)) alertSeenAtRef.current.delete(id);
+        }
         return Array.from(byId.values());
       });
     } catch {
@@ -106,8 +148,15 @@ export function useConsoleData() {
   }, []);
 
   const ack = useCallback(async (alertId: string, by: string) => {
-    const updated = await ackAlert(alertId, by);
-    setAlerts((prev) => upsertAlert(prev, updated));
+    // `AlertStore.acknowledge()` stamps `acknowledged_at`/`acknowledged_by`, removes the
+    // alert from the active set, and returns it — the returned object is the record of
+    // who took responsibility and when. Mirror that split here: out of the open queue,
+    // into the acknowledged log, so the operator's action visibly lands somewhere instead
+    // of the row simply vanishing.
+    const acknowledged = await ackAlert(alertId, by);
+    setAlerts((prev) => prev.filter((a) => a.alert_id !== alertId));
+    alertSeenAtRef.current.delete(alertId);
+    setAcknowledged((prev) => [acknowledged, ...prev.filter((a) => a.alert_id !== alertId)]);
   }, []);
 
   // Region swap — PLAN.md Phase 7 item 3 / RegionSwitcher.tsx. Flips the backend's
@@ -181,6 +230,7 @@ export function useConsoleData() {
           setVesselsUpdatedAt(msg.ts);
           break;
         case "alert":
+          alertSeenAtRef.current.set(msg.alert.alert_id, Date.now());
           setAlerts((prev) => upsertAlert(prev, msg.alert));
           break;
       }
@@ -232,6 +282,7 @@ export function useConsoleData() {
     wsConnected,
     vesselsUpdatedAt,
     loadError,
+    acknowledged,
     ack,
     refreshTraces,
     swapRegion,

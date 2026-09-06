@@ -33,7 +33,7 @@ from foreshore.geofence.engine import DynamicFence, GeofenceEngine
 from foreshore.models import Alert
 from foreshore.push.alerts import AlertStore
 from foreshore.push.loop import PushLoop
-from foreshore.push.vessels import _IMBL_BOAT_INDEX, default_fleet
+from foreshore.push.vessels import _FLEET_SIZE, _IMBL_BOAT_INDEX, default_fleet
 
 TICK_SECONDS = 300.0  # 5-minute ticks
 GENEROUS_TICKS = 40  # comfortably past the observed WARN (~17) and CRITICAL (~20) crossings
@@ -254,7 +254,7 @@ def test_tick_only_promotes_hazard_exclusion_features_to_dynamic_fences(region, 
 
 def test_construction_with_no_args_builds_default_fleet_and_stores(region):
     loop = PushLoop(region=region, tick_seconds=TICK_SECONDS)
-    assert len(loop.fleet) == 8
+    assert len(loop.fleet) == _FLEET_SIZE
     assert isinstance(loop.alert_store, AlertStore)
     assert isinstance(loop.engine, GeofenceEngine)
     assert loop.region is region

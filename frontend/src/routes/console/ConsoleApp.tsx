@@ -37,6 +37,14 @@ export default function ConsoleApp() {
   const [tab, setTab] = useState<Tab>("fleet");
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [evidenceByQuery, setEvidenceByQuery] = useState<Record<string, EvidencePanelRow[]>>({});
+  /** The one vessel the operator is currently working. Owned here rather than in either
+   *  child because the map and the alert queue are two views of the same selection:
+   *  clicking a boat focuses its alerts, clicking an alert focuses its boat. Clicking the
+   *  same one again clears, so there is always a way back to the whole-fleet view. */
+  const [selectedVesselId, setSelectedVesselId] = useState<string | null>(null);
+
+  const selectVessel = (vesselId: string | null) =>
+    setSelectedVesselId((current) => (current === vesselId ? null : vesselId));
 
   function viewTrace(queryId: string) {
     setSelectedTraceId(queryId);
@@ -117,10 +125,19 @@ export default function ConsoleApp() {
                 geofences={data.geofences}
                 center={basemap?.center}
                 zoom={basemap?.zoom}
+                selectedVesselId={selectedVesselId}
+                onSelectVessel={selectVessel}
               />
             </section>
             <section className="console-alerts-pane">
-              <AlertQueue alerts={data.alerts} vessels={data.vessels} onAck={data.ack} />
+              <AlertQueue
+                alerts={data.alerts}
+                vessels={data.vessels}
+                onAck={data.ack}
+                acknowledged={data.acknowledged}
+                selectedVesselId={selectedVesselId}
+                onSelectVessel={selectVessel}
+              />
             </section>
           </div>
         )}

@@ -36,7 +36,7 @@ from datetime import datetime
 from typing import Any, Iterable, Literal, Sequence
 from uuid import uuid4
 
-from ..config import RegionConfig, load_region
+from ..config import RegionConfig, env, load_region
 from ..models import AgentAnswer, Observation, TraceStep, ToolResult, Verdict, is_more_permissive
 from ..store.traces import TraceStore, digest, new_step
 from ..tools import registry as tool_registry
@@ -184,7 +184,14 @@ def answer(
     t0 = time.perf_counter()
     region = region or load_region(query.region_id)
     query_id = query.query_id or str(uuid4())
-    language = query.language or detect(query.text, candidates=region.languages)
+    # FORESHORE_LANGUAGE_LOCK=en (default) pins every answer to English regardless of
+    # detected/query language — Tamil mirroring is built (see language.py) but not yet
+    # ready to ship. Set FORESHORE_LANGUAGE_LOCK=auto to restore auto-detect-and-mirror.
+    language_lock = (env("FORESHORE_LANGUAGE_LOCK", "en") or "en").strip().lower()
+    if language_lock == "auto":
+        language = query.language or detect(query.text, candidates=region.languages)
+    else:
+        language = language_lock
 
     # A caller-supplied `when` always means "answer for exactly this instant" — only an
     # inferred-from-text time is ever ambiguous enough to be two candidate times at once.

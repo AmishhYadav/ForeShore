@@ -502,7 +502,7 @@ Every 60 s (5 s in demo mode), for each tracked vessel: project position forward
 heading and speed, compute distance and ETA to each geofence, sample hazard cells along the
 projection, emit alerts with dedupe and acknowledgement state. Push over WebSocket.
 
-`push/vessels.py` — simulator: 8 boats on scripted tracks out of Rameswaram and Nagapattinam,
+`push/vessels.py` — simulator: 6 boats on scripted tracks out of Rameswaram and Nagapattinam,
 **one deliberately closing on the 1974 line**, one heading into a high-wave cell. Label
 simulated positions as simulated in the UI — there is no public real-time AIS for Indian small
 boats and pretending otherwise is the kind of thing that unravels under questioning.

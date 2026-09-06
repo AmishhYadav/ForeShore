@@ -92,6 +92,78 @@ def _pg_insert(conn: Any, step: TraceStep) -> None:
         )
 
 
+_VERDICT_LEVELS = {"GO", "GO_WITH_CAUTION", "DO_NOT_ADVISE"}
+
+
+def _plan_question_and_surface(steps_sorted: list[TraceStep]) -> tuple[str | None, str | None]:
+    """``question``/``surface`` for a console list row come from the earliest ``plan``
+    step's ``args`` — there is no separate field for either, so this is a read-time
+    projection, not stored data. Any shape the args dict fails to have (missing key,
+    wrong type, a bare string where a dict was expected) degrades to ``None`` rather
+    than raising; a half-written JSONL line must not take the whole listing down."""
+    for s in steps_sorted:
+        if s.kind != "plan":
+            continue
+        args = s.args
+        if not isinstance(args, dict):
+            return None, None
+        text = args.get("text")
+        question = text if isinstance(text, str) and text else None
+        surface = args.get("surface")
+        surface = surface if isinstance(surface, str) else None
+        return question, surface
+    return None, None
+
+
+def _verdict_token(text: str) -> str | None:
+    """Token after ``"Verdict: "`` up to the first ``.`` or whitespace, accepted only
+    if it is exactly one of the three canonical verdict levels."""
+    marker = "Verdict: "
+    idx = text.find(marker)
+    if idx == -1:
+        return None
+    rest = text[idx + len(marker) :]
+    token = ""
+    for ch in rest:
+        if ch == "." or ch.isspace():
+            break
+        token += ch
+    return token if token in _VERDICT_LEVELS else None
+
+
+def _resolve_verdict(steps_sorted: list[TraceStep]) -> str | None:
+    """Verdict for a console list row: the ceiling step's own ``level`` governs when
+    present (it is the deterministic post-check's output, the most authoritative thing
+    in the trace); short of that, fall back to parsing it back out of the
+    ``evaluate_verdict`` tool result's digest — the same information, just encoded as
+    prose because the digest is a human-readable summary, not a structured record."""
+    for s in steps_sorted:
+        if s.kind != "ceiling":
+            continue
+        args = s.args
+        if not isinstance(args, dict):
+            continue
+        level = args.get("level")
+        if level in _VERDICT_LEVELS:
+            return level
+    for s in steps_sorted:
+        if s.kind != "tool_result" or s.tool != "evaluate_verdict":
+            continue
+        digest_text = s.result_digest
+        if not isinstance(digest_text, str) or not digest_text:
+            continue
+        try:
+            decoded = orjson.loads(digest_text)
+        except Exception:
+            decoded = digest_text
+        if not isinstance(decoded, str):
+            continue
+        token = _verdict_token(decoded)
+        if token:
+            return token
+    return None
+
+
 def _step_from_dict(rec: dict[str, Any]) -> TraceStep:
     ts_raw = rec.get("ts")
     ts = _aware(datetime.fromisoformat(ts_raw)) if ts_raw else utcnow()
@@ -203,12 +275,35 @@ class TraceStore:
         return steps
 
     def recent_queries(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Console list-row projection for the "Traces" tab.
+
+        Everything beyond the original five keys (``question``, ``surface``,
+        ``verdict``, ``duration_ms``, ``tool_ms``, ``ok``) is derived from the plan and
+        ceiling steps already stored for the query — nothing new is written to disk for
+        this. A row that cannot be enriched (missing plan step, malformed args,
+        unparseable digest) still appears with those fields set to their documented
+        absent value; one bad row never drops the rest of the listing.
+        """
         by_query: dict[str, list[TraceStep]] = {}
         for s in self._read_all():
             by_query.setdefault(s.query_id, []).append(s)
         rows: list[dict[str, Any]] = []
         for qid, steps in by_query.items():
             steps_sorted = sorted(steps, key=lambda s: s.ts)
+            question, surface = _plan_question_and_surface(steps_sorted)
+            span_ms = 0
+            if len(steps_sorted) > 1:
+                span_ms = int(
+                    round(
+                        (steps_sorted[-1].ts - steps_sorted[0].ts).total_seconds() * 1000
+                    )
+                )
+            tool_ms = 0
+            for s in steps:
+                try:
+                    tool_ms += int(s.duration_ms or 0)
+                except Exception:
+                    continue
             rows.append(
                 {
                     "query_id": qid,
@@ -216,6 +311,12 @@ class TraceStore:
                     "agents": sorted({s.agent for s in steps}),
                     "step_count": len(steps),
                     "tools": sorted({s.tool for s in steps if s.tool}),
+                    "question": question,
+                    "surface": surface,
+                    "verdict": _resolve_verdict(steps_sorted),
+                    "duration_ms": span_ms,
+                    "tool_ms": tool_ms,
+                    "ok": all(s.ok is True for s in steps),
                 }
             )
         rows.sort(key=lambda r: r["started_at"], reverse=True)
