@@ -426,3 +426,53 @@ Most of the original list is resolved. What remains:
 The name "Foreshore" is not clear in marine software — `Foreshore Technology` sells dredge
 monitoring software. None in fisheries advisory, none Indian. Fine for SIH; do not claim the
 name is unowned.
+
+---
+
+## Query latency — measured, not guessed
+
+96% of a query's wall clock is model calls, not data. Tools total ~0.3 s warm; the
+`data/cache` TTL is 600 s, so **pre-warm before a demo** — cold INCOIS OSF NetCDF grids
+are the one expensive fetch.
+
+Baseline was 30.5 s / 8 sequential model calls. Now ~15 s mean, 17 s worst, 5 calls:
+
+| Lever | Where | Win |
+|---|---|---|
+| Specialists run concurrently | `orchestrator.answer`, `ThreadPoolExecutor` | 16 s → slowest one |
+| Their evidence is seeded, not re-fetched | `runtime.run(prior_results=…)` | 3 turns → 1 per specialist |
+| `SPECIALIST_MAX_TURNS = 2` | `orchestrator` | bounds a model that re-reads a tool |
+| `DEFAULT_SPECIALIST_TIMEOUT_S = 12` | `orchestrator` | one slow specialist stops setting the floor |
+| Polish folded into `SYNTHESIS_SYSTEM` | `synthesis` | one less call, ~12 s on free NIM |
+
+The seeding was a real bug, not a tuning knob: `_specialist_brief` said "the results of
+those calls are already in your context" and the orchestrator passed nothing, so each
+specialist re-fetched its own tools.
+
+Escape hatches, all env: `FORESHORE_SPECIALISTS=serial`, `FORESHORE_SPECIALIST_TIMEOUT_S`,
+`FORESHORE_POLISH=on|off|auto`, `FORESHORE_LLM_ATTEMPTS`.
+
+Concurrency means shared state needs locks — `TraceStore` writes and the evidence bus
+(`tools/verdict_tools.py`) both have one. Specialist results are merged in **plan order,
+never completion order**, so the trace a judge reads is identical run to run.
+
+### Streaming
+
+`POST /api/query/stream` — same body and same result as `/api/query`, delivered as SSE:
+`status` (phase + detail) → `token` (text deltas) → `done` (the full outcome) or `error`.
+
+Only the synthesis turn streams, and only because it declares no tools — a streamed
+tool-call turn would mean reassembling partial JSON arguments for output nobody reads.
+
+**Streamed tokens are a draft.** Every deterministic guard runs after the last delta: the
+unsourced-number audit, `enforce_answer_contract`, the ceiling wording. `done.text` is
+authoritative and the client replaces rather than appends. Both surfaces label it as a
+draft while it streams. Streaming is presentation; the audit is the product.
+
+### Prompt echo
+
+Dropping the editor pass exposed that `_synthesis_prompt` interleaved directives with the
+facts they were about, and a 30B model copied its own instructions into the answer. The
+prompt is now three labelled blocks — QUESTION / WHAT IS TRUE / WHAT TO DO — and
+`is_prompt_echo` is the deterministic net: an answer containing a brief-only phrase is
+discarded for the template.

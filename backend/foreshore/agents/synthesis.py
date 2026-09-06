@@ -614,23 +614,30 @@ def polish_answer(
         note["reason"] = "nothing to polish"
         return cleaned, [], note
 
-    # The editor is a whole extra model call per answer — a second or two on every query,
-    # and on a streaming surface it also means rewriting text the viewer just watched
-    # being typed.
+    # The editor is a whole extra model call per answer — measured at 12.7 s on the free
+    # NIM endpoint, on top of everything else — and on a streaming surface it rewrites
+    # text the viewer has just watched being typed.
     #
-    # `auto` (the default) resolves that by moving the job upstream: SYNTHESIS_SYSTEM now
-    # carries the same presentation rules this pass used to enforce, so model-written
-    # prose arrives finished and needs no editor. The template path still gets one,
-    # because the template is assembled from tool summaries and genuinely reads like a
-    # form — that is where an editor earns its call.
+    # `auto`, the default, skips it, for two reasons that both come from measurement:
     #
-    # `on` forces it always, `off` never (deterministic typography cleanup only).
+    # * On the model path it is redundant. SYNTHESIS_SYSTEM now carries the same
+    #   presentation rules this pass used to enforce, so the prose arrives finished.
+    # * On the template path it is not worth the risk. The template is deterministic and
+    #   already audited, and the one thing an editor can still do to it is introduce a
+    #   number — which is exactly what it did on the run that decided this default, and
+    #   what `polish_is_safe` then had to catch. Spending 12 s and a fabrication risk on
+    #   cosmetics is the "polish becomes load-bearing" trap, from the other end.
+    #
+    # `on` forces it, `off` is the same as `auto` but says so explicitly. The
+    # deterministic typography cleanup above runs either way and is what actually keeps
+    # the text tidy.
     setting = (env("FORESHORE_POLISH", "auto") or "auto").strip().lower()
-    if setting in {"off", "0", "false", "no"}:
-        note["reason"] = "polish disabled (FORESHORE_POLISH=off)"
-        return cleaned, [], note
-    if setting not in {"on", "1", "true", "yes"} and written_by == "model":
-        note["reason"] = "not needed: written to the presentation rules already"
+    if setting not in {"on", "1", "true", "yes"}:
+        note["reason"] = (
+            "polish disabled (FORESHORE_POLISH=off)"
+            if setting in {"off", "0", "false", "no"}
+            else "not needed: the answer is already written to the presentation rules"
+        )
         return cleaned, [], note
     if runtime is None or not runtime.client.available or _is_scripted(runtime):
         note["reason"] = "no model available"
@@ -715,7 +722,22 @@ def enforce_answer_contract(
     if plain.lower() not in out.lower():
         copy = VERDICT_COPY.get(verdict.level, VERDICT_COPY["DO_NOT_ADVISE"])
         words = copy.get(language) or copy["en"]
-        out = " ".join(as_sentences([out, f"{plain}.", words["lead"]]))
+        # Framed on an informational answer, exactly as `template_answer` frames it.
+        # Appending a bare "Do not go." to an answer about vessel positions reads as a
+        # non-sequitur; the label is what makes it legible as attached safety context.
+        head = (
+            f"{label('safety_note', language)} — {plain}."
+            if answer_kind == "INFORMATIONAL"
+            else f"{plain}."
+        )
+        # Position follows the same rule `template_answer` uses: anything but the
+        # permissive verdict leads, because someone asking about the sea while conditions
+        # are against them needs that first. A GO trails, so the answer they asked for
+        # stays the first thing they read.
+        block = [head, words["lead"]]
+        out = " ".join(
+            as_sentences(block + [out] if verdict.level != "GO" else [out] + block)
+        )
         repairs.append("verdict wording restored")
 
     # 2. DO_NOT_ADVISE must hand off to a named human authority. Not negotiable, and not
@@ -831,8 +853,14 @@ def compose(
             cleaned, unsourced = strip_unsourced(result.text, observations)
             # The model's prose only replaces the template if it survived the audit with
             # something substantial left. Otherwise the template stands.
+            echo = is_prompt_echo(cleaned)
             if not cleaned or len(cleaned) < 0.4 * len(result.text):
                 degraded = f"model prose failed the evidence audit ({unsourced})"
+            elif echo is not None:
+                # It copied its own brief into the answer. Nothing downstream can repair
+                # that — the words are wrong, not the facts — so the template ships.
+                degraded = f"model echoed its instructions ({echo!r})"
+                repairs.append("model echoed its instructions; template used")
             elif answer_kind == "INFORMATIONAL" and not answers_the_question(
                 cleaned, extras
             ):
@@ -980,61 +1008,108 @@ def _synthesis_prompt(
     language: str,
     answer_kind: str = "ADVISORY",
 ) -> str:
-    lines = [f"The question asked was: {question}", ""]
+    # Three labelled blocks, and the labels matter. This prompt used to interleave
+    # directives with the facts they were about ("...downgraded this from
+    # GO_WITH_CAUTION. Say so — that the system was made more cautious is part of the
+    # answer.") — and a mid-sized model copied those sentences straight into the answer,
+    # instructions and all. Separating what is TRUE from what to DO, and saying plainly
+    # that the brief is not content, is the fix; `_is_prompt_echo` is the net under it.
+    lines = [
+        "## QUESTION",
+        question,
+        "",
+        "## WHAT IS TRUE  (facts and numbers — the only ones you may state)",
+    ]
     if verdict:
-        role = (
-            "DECIDED VERDICT — safety context for this position and time, NOT the answer "
-            "to the question above (you cannot change it):"
-            if answer_kind == "INFORMATIONAL"
-            else "DECIDED VERDICT (you cannot change this):"
-        )
         lines += [
-            f"{role} {verdict.level}",
-            "Say it in these words, never as the code above: "
-            f"\"{_plain_verdict(verdict.level, language)}\"",
-            f"Reasons: {'; '.join(verdict.reasons) or '(none recorded)'}",
+            f"- The advisory has been decided: \"{_plain_verdict(verdict.level, language)}\".",
+            f"- Why: {'; '.join(verdict.reasons) or '(none recorded)'}",
         ]
         if verdict.ceiling_notes:
-            lines.append("Governing advisory notes: " + " ".join(verdict.ceiling_notes))
+            lines.append("- Governing advisory: " + " ".join(verdict.ceiling_notes))
         if verdict.downgraded_from:
             lines.append(
-                f"The advisory ceiling downgraded this from {verdict.downgraded_from}. "
-                "Say so — that the system was made more cautious is part of the answer."
+                "- The advisory ceiling made this more cautious than the vessel "
+                "thresholds alone would have been."
             )
         if verdict.handoff:
             h = verdict.handoff
             lines.append(
-                "Named handoff you must state, as a complete sentence telling the "
-                f"reader to contact it — never as a bare name: {h.authority_name}"
-                + (f" ({h.contact})" if (h.contact and h.contact_verified) else "")
+                f"- The person to contact is {h.authority_name}"
+                + (f", {h.contact}" if (h.contact and h.contact_verified) else "")
+                + "."
             )
-    lines += ["", "EVIDENCE — the complete set of numbers you may use:"]
     for r in tool_results:
         if not r.observations and not r.summary:
             continue
-        lines.append(f"[{r.tool}] {r.summary}")
+        lines.append(f"- {r.summary}")
         for obs in r.observations[:25]:
             p = obs.provenance
             res = f", {p.spatial_resolution_m/1000:.0f} km" if p.spatial_resolution_m else ""
             lines.append(
-                f"  - {obs.variable} = {obs.display()} [{p.source_name}"
+                f"    {obs.variable} = {obs.display()} [{p.source_name}"
                 f"{res}, {p.freshness}"
                 + (", DERIVED" if p.is_derived else "")
                 + "]"
             )
-    closing = (
-        "Answer the question that was asked, from that evidence. Place the verdict "
-        "sentence as instructed — it is context, not the answer."
-        if answer_kind == "INFORMATIONAL"
-        else "State the verdict first, then the reason."
-    )
-    lines += ["", f"Write the answer in {language_name(language)}. {closing}"]
+
+    lines += ["", "## WHAT TO DO"]
+    if answer_kind == "INFORMATIONAL":
+        lines += [
+            "Answer the question, from the facts above.",
+            "The advisory is context for this position and time, not the answer — give "
+            "it one short sentence, and never let it read as a refusal to answer.",
+        ]
+    else:
+        lines += [
+            "The advisory is the answer. Open with it as a complete sentence, then give "
+            "the reason.",
+        ]
+    if verdict and verdict.downgraded_from:
+        lines.append("Mention that the advisory was made more cautious.")
+    if verdict and verdict.handoff:
+        lines.append(
+            "Tell the reader to contact the named person, in a complete sentence — "
+            "never as a bare name at the end."
+        )
+    lines += [
+        f"Write in {language_name(language)}.",
+        "",
+        "Reply with the answer itself and nothing else. This brief is instructions, not "
+        "text to include: never quote or restate any line above that tells you what to "
+        "do, and never use the words \"question\", \"brief\", \"advisory ceiling notes\" "
+        "or \"handoff\" as labels in your answer.",
+    ]
     return "\n".join(lines)
+
+
+#: Phrases that only ever appear in the brief, never in an answer to a fisherman. A model
+#: that copies its instructions produces text containing one of these; the answer is then
+#: discarded for the template, which cannot do this. Cheap, deterministic, no false
+#: positives — nobody warning a boat off the sea writes "the person to contact is" as a
+#: heading or says "reply with the answer itself".
+_PROMPT_ECHO_MARKERS: tuple[str, ...] = (
+    "## question", "## what is true", "## what to do",
+    "reply with the answer itself", "this brief is instructions",
+    "you must state", "say so — that the system", "say so - that the system",
+    "the only ones you may state", "never as a bare name",
+    "is part of the answer", "write in english",
+)
+
+
+def is_prompt_echo(text: str) -> str | None:
+    """The marker this answer copied out of its own brief, or ``None``."""
+    lowered = (text or "").lower()
+    for marker in _PROMPT_ECHO_MARKERS:
+        if marker in lowered:
+            return marker
+    return None
 
 
 __all__ = [
     "compose", "template_answer", "evidence_panel", "strip_unsourced", "as_sentences",
     "enforce_answer_contract", "answers_the_question", "handoff_present",
+    "is_prompt_echo",
     "VERDICT_COPY", "LABELS", "label", "SYNTHESIS_SYSTEM", "ANSWER_KIND_RULES",
     "EvidenceRow",
     "humanise_verdict_codes", "normalise_prose", "polish_answer", "polish_is_safe",

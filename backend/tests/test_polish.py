@@ -138,13 +138,36 @@ def test_an_empty_or_gutted_rewrite_is_rejected(candidate: str):
 # -- polish_answer: degrades to deterministic cleanup -----------------------------------
 
 
+MESSY = "Do not go.  \n**Waves** are 0.56 m."
+TIDY = "Do not go. Waves are 0.56 m."
+
+
 def test_polish_without_a_model_still_cleans_typography_and_says_so():
+    """The deterministic cleanup is the part that always runs. The editor pass is a
+    model call and every path that skips it records which one, so a console can show
+    why the text was not rewritten."""
     text, steps, note = polish_answer(
-        "Do not go.  \n**Waves** are 0.56 m.",
-        verdict=_verdict(),
-        language="en",
-        runtime=None,
+        MESSY, verdict=_verdict(), language="en", runtime=None
     )
-    assert text == "Do not go. Waves are 0.56 m."
+    assert text == TIDY
+    assert steps == []
+    assert note["applied"] is False
+    # Default is `auto`: the answer is written to the presentation rules by synthesis,
+    # so no editor call is made at all — the reason is that, not the missing model.
+    assert "already written" in note["reason"]
+
+
+def test_polish_forced_on_without_a_model_reports_the_missing_model(monkeypatch):
+    monkeypatch.setenv("FORESHORE_POLISH", "on")
+    text, steps, note = polish_answer(
+        MESSY, verdict=_verdict(), language="en", runtime=None
+    )
+    assert text == TIDY
     assert steps == []
     assert note == {"applied": False, "reason": "no model available"}
+
+
+def test_polish_off_is_reported_as_off(monkeypatch):
+    monkeypatch.setenv("FORESHORE_POLISH", "off")
+    _, _, note = polish_answer(MESSY, verdict=_verdict(), language="en", runtime=None)
+    assert note["reason"] == "polish disabled (FORESHORE_POLISH=off)"

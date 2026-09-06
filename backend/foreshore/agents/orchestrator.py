@@ -31,7 +31,7 @@ submission rests on them:
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable, Iterable, Literal, Sequence
@@ -56,6 +56,24 @@ VERDICT_TOOL = "evaluate_verdict"
 #: follow-up call. Uncapped, a model that keeps re-reading the same tool spent three
 #: round-trips per specialist gathering nothing new.
 SPECIALIST_MAX_TURNS = 2
+
+
+#: Wall-clock budget for the whole specialist phase. Free-tier model latency is wildly
+#: variable — one specialist has been measured at 30 s while its two siblings finished in
+#: 1.5 s and 12 s — and the phase is optional commentary over evidence that is already
+#: gathered and already in the answer. Since the rest of the query (tools, verdict,
+#: synthesis) is about 4 s, this number is very nearly the worst case for the whole
+#: answer, which is why it is set to what a person will wait rather than to what a slow
+#: specialist might want.
+DEFAULT_SPECIALIST_TIMEOUT_S = 12.0
+
+
+def _specialist_timeout_s() -> float:
+    raw = env("FORESHORE_SPECIALIST_TIMEOUT_S")
+    try:
+        return min(max(float(raw), 2.0), 300.0) if raw else DEFAULT_SPECIALIST_TIMEOUT_S
+    except (TypeError, ValueError):
+        return DEFAULT_SPECIALIST_TIMEOUT_S
 
 
 def _concurrent_specialists() -> bool:
@@ -378,15 +396,31 @@ def answer(
         # is identical run to run.
         runs: dict[str, Any] = {}
         if len(order) > 1 and _concurrent_specialists():
-            with ThreadPoolExecutor(max_workers=min(len(order), 4)) as pool:
-                for future in [pool.submit(_run_specialist, n) for n in order]:
+            budget = _specialist_timeout_s()
+            pool = ThreadPoolExecutor(max_workers=min(len(order), 4))
+            futures = {n: pool.submit(_run_specialist, n) for n in order}
+            deadline = time.monotonic() + budget
+            try:
+                for name, future in futures.items():
                     try:
-                        got = future.result()
+                        got = future.result(timeout=max(0.0, deadline - time.monotonic()))
+                    except FuturesTimeout:
+                        # One slow specialist must not set the floor for the whole
+                        # answer. Its evidence was gathered in step 1 and is already on
+                        # the bus — what is lost is its commentary, which is a quality
+                        # cost, not a correctness one. Said out loud in `missing` rather
+                        # than quietly dropped.
+                        missing.append(f"{name}:timed out after {budget:.0f}s")
+                        continue
                     except Exception as exc:  # noqa: BLE001 — one specialist, not the answer
                         missing.append(f"specialist:{type(exc).__name__}: {exc}")
                         continue
                     if got is not None:
                         runs[got[0]] = got[1]
+            finally:
+                # Do not block on a specialist we have already given up on: its thread
+                # is bounded by the HTTP client's own timeout and its result is discarded.
+                pool.shutdown(wait=False, cancel_futures=True)
         else:
             for name in order:
                 got = _run_specialist(name)
