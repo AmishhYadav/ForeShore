@@ -1,0 +1,288 @@
+# Curated marine-concept glossary for the conversational front door's CONCEPT door
+# (agents/conversation.py::classify_utterance / concept_reply).
+#
+# PROVENANCE RULE (CLAUDE.md invariant 3): an entry's `en`/`ta` prose may name a NUMBER
+# only when `sourced_from` is set to one of the three kinds below, and
+# `concept_reply` must then attach matching Observation records for those numbers.
+# An entry with `sourced_from: null` MUST stay digit-free — that is asserted over the
+# whole loaded glossary in backend/tests/test_conversation.py.
+#
+#   sourced_from: null            -> plain definition, no numbers, no provenance needed
+#   sourced_from: douglas_table   -> numbers come from verdict/douglas.py's band table
+#   sourced_from: vessel_limits   -> numbers come from config/vessels.yaml via
+#                                     config.load_vessels()
+#   sourced_from: region_config   -> facts come from the active RegionConfig (a name, a
+#                                     configured park, ...); not necessarily a number
+#
+# `aliases` are what conversation.classify_utterance(text, glossary_terms=...) and
+# conversation.is_definitional match against to decide CONCEPT vs OPERATIONAL. They are
+# matched as lowercase substrings (multi-word) or ASCII word-boundary tokens
+# (single-word) — see planner._cue_hits. Keep them specific: a bare common word invites
+# false positives on unrelated "what is ...?" questions.
+
+terms:
+  - key: pfz
+    aliases:
+      - "pfz"
+      - "potential fishing zone"
+      - "potential fishing zones"
+      - "fishing zone advisory"
+    en: >-
+      A Potential Fishing Zone (PFZ) is a stretch of coastal water that INCOIS names,
+      from satellite chlorophyll and sea-surface-temperature fronts, as likely to hold
+      higher fish concentrations. It is an official government advisory issued for a
+      specific date and place — not a guarantee, and not the same as FORESHORE's own
+      derived cross-check, which is always labelled indicative.
+    ta: >-
+      பொட்டன்ஷியல் ஃபிஷிங் சோன் (PFZ) என்பது, செயற்கைக்கோள் குளோரோஃபில் மற்றும் கடல்
+      மேற்பரப்பு வெப்பநிலை முன்னணிகளிலிருந்து INCOIS அறிவிக்கும், அதிக மீன் இருக்கக்கூடிய
+      கடற்பரப்புப் பகுதி. இது ஒரு குறிப்பிட்ட தேதிக்கும் இடத்திற்கும் வெளியிடப்படும் அரசு
+      அறிவிப்பு — உத்தரவாதம் அல்ல, FORESHORE-இன் சொந்த மதிப்பீட்டுப் பகுதிக்கும் இது
+      ஒன்றல்ல; அது எப்போதும் 'குறிப்பான' என்றே குறிக்கப்படும்.
+    sourced_from: null
+
+  - key: chlorophyll
+    aliases:
+      - "chlorophyll"
+      - "chlorophyl"
+      - "ocean colour"
+      - "ocean color"
+    en: >-
+      Chlorophyll is the pigment phytoplankton use to photosynthesise, and satellites
+      measure its concentration in surface water as a proxy for how much plankton is
+      there. More plankton usually means more small fish feeding on it, and more fish
+      feeding on those — one of the two signals INCOIS's own fishing-zone method rests
+      on, alongside sea surface temperature.
+    ta: >-
+      குளோரோஃபில் என்பது பாசிப்பிளாங்க்டன் ஒளிச்சேர்க்கைக்குப் பயன்படுத்தும் நிறமி;
+      அதன் அளவை செயற்கைக்கோள்கள் கடல் மேற்பரப்பில் அளந்து, அங்கு எவ்வளவு பிளாங்க்டன்
+      உள்ளது என்பதற்கான குறியீடாகப் பயன்படுத்துகின்றன. அதிக பிளாங்க்டன் இருந்தால்
+      பொதுவாக அதைத் தின்னும் சிறு மீன்களும், அவற்றைத் தின்னும் மீன்களும் அதிகமாக
+      இருக்கும் — கடல் மேற்பரப்பு வெப்பநிலையுடன் சேர்ந்து INCOIS-இன் மீன்பிடி மண்டல
+      முறையின் இரு அடிப்படைச் சமிக்ஞைகளில் இதுவும் ஒன்று.
+    sourced_from: null
+
+  - key: sea_surface_temperature
+    aliases:
+      - "sea surface temperature"
+      - "sst"
+      - "water temperature"
+      - "ocean temperature"
+    en: >-
+      Sea surface temperature (SST) is the temperature of the ocean's top layer,
+      tracked from satellites and buoys. Warm-water fronts and eddies often mark the
+      edges where fish gather to feed, which is why SST is read alongside chlorophyll —
+      never alone — when this system looks for productive water.
+    ta: >-
+      கடல் மேற்பரப்பு வெப்பநிலை (SST) என்பது கடலின் மேல் அடுக்கின் வெப்பநிலை,
+      செயற்கைக்கோள்கள் மற்றும் மிதவைகள் மூலம் கண்காணிக்கப்படுகிறது. வெதுவெதுப்பான நீர்
+      முன்னணிகளும் சுழல்களும் பெரும்பாலும் மீன்கள் உணவுக்காகக் கூடும் எல்லைகளைக்
+      குறிக்கின்றன; அதனால் இந்த அமைப்பு நல்ல மீன்பிடி நீரைத் தேடும்போது SST-ஐ
+      குளோரோஃபில்லுடன் சேர்த்தே பார்க்கிறது, தனியாக அல்ல.
+    sourced_from: null
+
+  - key: douglas_scale
+    aliases:
+      - "douglas scale"
+      - "douglas sea scale"
+      - "douglas band"
+      - "sea state scale"
+    en: >-
+      The Douglas sea scale describes how rough the sea is using descriptive words
+      rather than a wave-height figure — SMOOTH, SLIGHT, MODERATE, ROUGH and on to VERY
+      ROUGH and HIGH. FORESHORE maps each word straight to the wave-height range it
+      stands for: MODERATE reaches up to 2.5 m of significant wave height, and ROUGH
+      runs from there up to 4.0 m. IMD publishes the word, never the number, so this
+      mapping is what turns its bulletin into an enforceable ceiling.
+    ta: >-
+      டக்ளஸ் கடல் அளவுகோல் கடலின் கொந்தளிப்பை எண்ணைவிட வார்த்தைகளால் விவரிக்கிறது —
+      SMOOTH, SLIGHT, MODERATE, ROUGH, பின்னர் VERY ROUGH, HIGH என. FORESHORE ஒவ்வொரு
+      வார்த்தையையும் அது குறிக்கும் அலை உயர வரம்புக்கு நேரடியாக மாற்றுகிறது: MODERATE
+      எனில் குறிப்பிடத்தக்க அலை உயரம் 2.5 மீ வரை, ROUGH எனில் அதிலிருந்து 4.0 மீ வரை.
+      IMD எப்போதும் எண்ணை அல்ல, வார்த்தையை மட்டுமே வெளியிடுகிறது; எனவே இந்த மாற்று
+      அட்டவணையே அதன் அறிவிப்பைச் செயல்படுத்தக்கூடிய வரம்பாக மாற்றுகிறது.
+    sourced_from: douglas_table
+
+  - key: significant_wave_height
+    aliases:
+      - "significant wave height"
+      - "wave height"
+      - "hs"
+    en: >-
+      Significant wave height (Hs) is the average height of the highest third of waves
+      in a given sea state — the standard figure ocean forecasts use to summarise how
+      big the waves are, even though individual waves vary a great deal around it.
+      FORESHORE reports it from every source side by side rather than averaging them,
+      because the models genuinely disagree.
+    ta: >-
+      குறிப்பிடத்தக்க அலை உயரம் (Hs) என்பது ஒரு கடல் நிலையில் மிக உயரமான மூன்றில் ஒரு
+      பங்கு அலைகளின் சராசரி உயரம் — அலைகள் அதைச் சுற்றிப் பெரிதும் மாறுபட்டாலும், கடல்
+      முன்னறிவிப்புகள் அலைகளின் அளவைச் சுருக்கமாகச் சொல்லப் பயன்படுத்தும் நிலையான
+      எண். FORESHORE ஒவ்வொரு மூலத்தையும் தனித்தனியாகக் காட்டுகிறது, சராசரி
+      எடுப்பதில்லை — ஏனெனில் மாதிரிகள் உண்மையில் ஒரே கருத்தில் இல்லை.
+    sourced_from: null
+
+  - key: swell_period
+    aliases:
+      - "swell period"
+      - "wave period"
+      - "swell"
+    en: >-
+      Swell period is the time between successive wave crests of ocean swell, in
+      seconds. A longer period usually means the swell travelled from a distant storm
+      and carries more energy per wave than it looks like from the shore — which is
+      exactly why FORESHORE watches it for the kallakkadal signature.
+    ta: >-
+      அலை காலம் (swell period) என்பது கடல் அலைகளின் அடுத்தடுத்த உச்சிகளுக்கு
+      இடையேயான நேரம், வினாடிகளில். நீண்ட காலம் என்பது பொதுவாக அந்த அலை தொலைவில்
+      உள்ள புயலிலிருந்து வந்தது என்றும், கரையில் தெரிவதை விட ஒவ்வொரு அலையிலும் அதிக
+      ஆற்றல் உள்ளது என்றும் பொருள் — இதனாலேயே FORESHORE இதை கல்லக்கடல்
+      சமிக்ஞைக்காகக் கண்காணிக்கிறது.
+    sourced_from: null
+
+  - key: kallakkadal
+    aliases:
+      - "kallakkadal"
+      - "kalla kadal"
+      - "swell surge"
+      - "coastal flooding swell"
+    en: >-
+      Kallakkadal is a sudden coastal flooding event on this coast, caused by
+      long-period swell that arrives from a distant storm — sometimes under a clear sky
+      with no local wind to warn of it. FORESHORE treats it as a real hazard: when an
+      IMD storm-surge or tidal warning names your district and the swell period reaches
+      15 seconds or more, the advisory ceiling refuses to authorise a trip outright,
+      whatever the sea looks like.
+    ta: >-
+      கல்லக்கடல் என்பது இந்தக் கடற்கரையில் திடீரென ஏற்படும் கரை வெள்ளப்பெருக்கு
+      நிகழ்வு, தொலைவில் உள்ள புயலிலிருந்து வரும் நீண்ட-கால அலையால் ஏற்படுகிறது —
+      சில நேரங்களில் தெளிவான வானத்தில், உள்ளூர் காற்று எச்சரிக்கை இல்லாமலேயே.
+      FORESHORE இதை ஒரு உண்மையான அபாயமாகக் கருதுகிறது: IMD புயல்-கடல்கிளர்ச்சி
+      அல்லது அலை எச்சரிக்கை உங்கள் மாவட்டத்தைக் குறிப்பிட்டு, அலை காலம் 15
+      வினாடிகள் அல்லது அதற்கு மேல் இருந்தால், கடல் எப்படித் தெரிந்தாலும் ஆலோசனை
+      உச்சவரம்பு பயணத்தை முழுமையாக மறுக்கிறது.
+    sourced_from: vessel_limits
+
+  - key: imbl
+    aliases:
+      - "imbl"
+      - "international maritime boundary line"
+      - "maritime boundary line"
+      - "historic waters line"
+      - "india sri lanka boundary"
+    en: >-
+      The International Maritime Boundary Line (IMBL) marks where Indian and Sri Lankan
+      waters meet. FORESHORE treats two stretches of it as legally distinct: the
+      historic-waters line through Palk Bay, and the maritime boundary agreed further
+      south and east. They are different legal regimes with different names, different
+      warning distances and different wording — never folded into one generic
+      'boundary'.
+    ta: >-
+      சர்வதேச கடல் எல்லைக்கோடு (IMBL) இந்திய மற்றும் இலங்கை நீர்நிலைகள் சந்திக்கும்
+      இடத்தைக் குறிக்கிறது. FORESHORE இதன் இரு பகுதிகளை சட்டப்படி வேறுபட்டவையாகக்
+      கருதுகிறது: பாக் விரிகுடா வழியாகச் செல்லும் வரலாற்று-நீர்நிலைக் கோடு, மற்றும்
+      தெற்கே கிழக்கே மேலும் ஒப்புக்கொள்ளப்பட்ட கடல் எல்லை. அவை வெவ்வேறு சட்ட
+      ஏற்பாடுகள், வெவ்வேறு பெயர்கள், வெவ்வேறு எச்சரிக்கை தூரங்கள் — ஒரே பொதுவான
+      'எல்லை' என ஒருபோதும் ஒன்றிணைக்கப்படாது.
+    sourced_from: null
+
+  - key: geofence
+    aliases:
+      - "geofence"
+      - "geofences"
+      - "geofencing"
+      - "geo-fence"
+      - "virtual boundary"
+    en: >-
+      A geofence is a virtual boundary FORESHORE checks a boat's position against
+      automatically — a legal maritime line, a marine protected area, an ecologically
+      sensitive habitat, a hazard exclusion zone, or a boundary a fisheries office has
+      drawn itself. Closing fast on one of these is flagged as a warning well before it
+      happens, and the classes are never treated as interchangeable.
+    ta: >-
+      ஜியோஃபென்ஸ் (geofence) என்பது ஒரு படகின் நிலையை FORESHORE தானாகச் சரிபார்க்கும்
+      மெய்நிகர் எல்லை — ஒரு சட்டப்பூர்வ கடல் கோடு, கடல் பாதுகாப்புப் பகுதி,
+      சூழலியல் ரீதியாக உணர்திறன் வாய்ந்த வாழ்விடம், அபாய-விலக்கு மண்டலம், அல்லது
+      மீன்வளத் துறை தானாக வரைந்த எல்லை. இவற்றில் ஒன்றை வேகமாக நெருங்குவது
+      நடப்பதற்கு முன்பே எச்சரிக்கையாகக் காட்டப்படும்; இந்த வகைகள் ஒருபோதும்
+      ஒன்றுக்கொன்று மாற்றாகக் கருதப்படாது.
+    sourced_from: null
+
+  - key: marine_protected_area
+    aliases:
+      - "marine protected area"
+      - "mpa"
+      - "marine national park"
+      - "marine sanctuary"
+    en: >-
+      A Marine Protected Area (MPA) is a legally protected marine habitat where
+      fishing, anchoring and collection are restricted to conserve reefs, seagrass and
+      the species that depend on them. FORESHORE treats it as its own geofence class,
+      distinct from a hard international boundary — the restriction is conservation
+      law, not a border.
+    ta: >-
+      கடல் பாதுகாப்புப் பகுதி (MPA) என்பது பவளப்பாறைகள், கடல்புல் மற்றும் அவற்றைச்
+      சார்ந்த உயிரினங்களைப் பாதுகாக்க, மீன்பிடித்தல், நங்கூரமிடுதல் மற்றும் சேகரிப்பு
+      கட்டுப்படுத்தப்படும் சட்டப்பூர்வமாகப் பாதுகாக்கப்பட்ட கடல் வாழ்விடம். FORESHORE
+      இதை ஒரு தனி ஜியோஃபென்ஸ் வகையாகக் கருதுகிறது, கடினமான சர்வதேச எல்லையிலிருந்து
+      வேறுபட்டது — இந்தக் கட்டுப்பாடு பாதுகாப்புச் சட்டம், எல்லை அல்ல.
+    sourced_from: region_config
+
+  - key: upwelling
+    aliases:
+      - "upwelling"
+      - "upwelling zone"
+      - "coastal upwelling"
+    en: >-
+      Upwelling is when wind and currents pull cooler, nutrient-rich water up from
+      depth to the surface. It shows up as a cold patch against warmer surrounding
+      water, and it often marks a productive feeding front — one of the patterns
+      FORESHORE looks for alongside chlorophyll and sea surface temperature.
+    ta: >-
+      அப்வெல்லிங் (upwelling) என்பது காற்றும் நீரோட்டங்களும் ஆழத்திலிருந்து குளிர்ந்த,
+      ஊட்டச்சத்து நிறைந்த நீரை மேற்பரப்புக்கு இழுக்கும் நிகழ்வு. இது சுற்றியுள்ள
+      வெதுவெதுப்பான நீருக்கு எதிராக குளிர்ந்த பகுதியாகத் தெரியும், மேலும் அது
+      பெரும்பாலும் ஒரு சிறந்த உணவு முன்னணியைக் குறிக்கும் — குளோரோஃபில் மற்றும் கடல்
+      மேற்பரப்பு வெப்பநிலையுடன் சேர்த்து FORESHORE தேடும் அமைப்புகளில் இதுவும் ஒன்று.
+    sourced_from: null
+
+  - key: verdict_levels
+    aliases:
+      - "verdict levels"
+      - "the three verdicts"
+      - "advisory levels"
+      - "go with caution"
+      - "do not advise"
+      - "verdict"
+    en: >-
+      FORESHORE settles every question about going to sea into exactly three levels:
+      go, go with caution, or do not advise. The last of those is a designed outcome
+      for missing, stale or contradictory evidence — not an error — and it always hands
+      off to a named authority: the nearest landing centre, or the Coast Guard.
+    ta: >-
+      கடலுக்குச் செல்வதா என்ற ஒவ்வொரு கேள்விக்கும் FORESHORE மூன்று நிலைகளில்
+      ஒன்றாகவே முடிவெடுக்கிறது: போகலாம், எச்சரிக்கையுடன் போகலாம், அல்லது ஆலோசனை
+      தர முடியாது. கடைசி நிலை, தகவல் இல்லாத, காலாவதியான அல்லது முரண்பட்ட
+      ஆதாரங்களுக்கான வடிவமைக்கப்பட்ட முடிவு — பிழை அல்ல — மேலும் அது எப்போதும் ஒரு
+      பெயரிடப்பட்ட அதிகாரத்திடம் ஒப்படைக்கும்: அருகிலுள்ள தரையிறங்கும் மையம், அல்லது
+      கடலோர காவல் படை.
+    sourced_from: null
+
+  - key: advisory_ceiling
+    aliases:
+      - "advisory ceiling"
+      - "ceiling"
+      - "advisory cap"
+    en: >-
+      The advisory ceiling is a deterministic check applied after every verdict is
+      produced: FORESHORE may be more cautious than the governing IMD Coastal Bulletin
+      for the area, but it can never be more permissive. Whenever a verdict would allow
+      more than the bulletin permits, it is downgraded automatically, and the reason is
+      shown.
+    ta: >-
+      ஆலோசனை உச்சவரம்பு என்பது ஒவ்வொரு தீர்ப்புக்குப் பிறகும் பயன்படுத்தப்படும்
+      உறுதியான சரிபார்ப்பு: அந்தப் பகுதிக்கான ஆளும் IMD கடலோர அறிவிப்பை விட
+      FORESHORE அதிக எச்சரிக்கையுடன் இருக்கலாம், ஆனால் அதை விட எப்போதும் தளர்வாக
+      இருக்க முடியாது. அறிவிப்பு அனுமதிப்பதை விட ஒரு தீர்ப்பு அதிகமாக அனுமதித்தால்,
+      அது தானாகவே தரம் தாழ்த்தப்படும், காரணமும் காட்டப்படும்.
+    sourced_from: null

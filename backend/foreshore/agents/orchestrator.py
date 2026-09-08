@@ -37,13 +37,22 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, Literal, Sequence
 from uuid import uuid4
 
-from ..config import RegionConfig, env, load_region
-from ..models import AgentAnswer, Observation, TraceStep, ToolResult, Verdict, is_more_permissive
+from ..config import RegionConfig, env, load_glossary, load_region
+from ..models import (
+    AgentAnswer,
+    Observation,
+    TraceStep,
+    ToolResult,
+    Verdict,
+    is_more_permissive,
+    utcnow,
+)
 from ..store.traces import TraceStore, digest, new_step
 from ..tools import registry as tool_registry
 from ..tools.verdict_tools import clear_evidence, last_outcome, record_evidence
-from . import specialists
-from .language import detect
+from . import conversation, specialists
+from .conversation import SHORT_CIRCUIT_KINDS, classify_utterance
+from .language import detect, normalise
 from .planner import Plan, plan as build_plan, resolve_scenario_times
 from .runtime import AgentRuntime, ScriptedClient
 from .synthesis import compose
@@ -262,6 +271,23 @@ def answer(
         language = language_lock
     else:
         language = query.language or detect(query.text, candidates=region.languages)
+
+    # -- Conversational front door ------------------------------------------------------
+    # Distress, "what can you do", a glossary definition, smalltalk and out-of-scope
+    # utterances never reach the planner or an AgentRuntime: none of them is a marine
+    # question a specialist needs to reason over, and running the full pipeline on
+    # "hello" used to cost five model calls and ~15 s to answer a greeting with a
+    # sea-state verdict nobody asked for. classify_utterance is deterministic and
+    # model-free, like every other classifier in this pipeline (see
+    # agents/conversation.py's own module docstring) — it runs on the raw text, before
+    # position defaulting and before the scenario-time detection below, so a distress
+    # utterance that happens to name two clock times is still answered as a distress.
+    kind = classify_utterance(query.text, glossary_terms=load_glossary().aliases())
+    if kind in SHORT_CIRCUIT_KINDS:
+        return _short_circuit_answer(
+            kind, query, language=language, region=region, query_id=query_id,
+            traces=traces or TraceStore(),
+        )
 
     # A caller-supplied `when` always means "answer for exactly this instant" — only an
     # inferred-from-text time is ever ambiguous enough to be two candidate times at once.
@@ -545,6 +571,105 @@ def answer(
         duration_ms=int((time.perf_counter() - t0) * 1000),
         missing=_dedupe(missing),
         specialists_used=_dedupe(specialists_used),
+    )
+
+
+def _short_circuit_answer(
+    kind: str,
+    query: Query,
+    *,
+    language: str,
+    region: RegionConfig,
+    query_id: str,
+    traces: TraceStore,
+) -> QueryOutcome:
+    """DISTRESS / CAPABILITY / CONCEPT / SMALLTALK / OUT_OF_SCOPE, answered from
+    ``agents.conversation``'s handlers — no ``Plan`` step, no ``AgentRuntime``, no model
+    call. This is the whole point of the front door: none of these five kinds is a
+    marine question, so none of them should cost a planner pass or a specialist turn.
+
+    Builds the same ``QueryOutcome`` shape the tool pipeline produces so every existing
+    consumer of it (``routes_query.py``, both UIs) keeps working unchanged — a trivial,
+    empty-steps ``Plan`` and an ``AgentAnswer`` with ``verdict=None``, exactly as the
+    module docstring's "designed outcome, not an error state" framing already allows
+    for. One ``TraceStep`` is recorded under ``UserInteraction``, the specialist that
+    owns exactly this job, so the console trace inspector shows which door the
+    utterance came through.
+    """
+    t0 = time.perf_counter()
+    port = region.anchor_ports[0]
+    lat = port.lat if query.lat is None else query.lat
+    lon = port.lon if query.lon is None else query.lon
+    when = query.when or utcnow()
+
+    if kind == "DISTRESS":
+        reply = conversation.distress_reply(lat, lon, region=region, language=language)
+    elif kind == "CAPABILITY":
+        reply = conversation.capability_reply(language, region=region)
+    elif kind == "CONCEPT":
+        reply = conversation.concept_reply(
+            query.text, language=language, glossary=load_glossary(), region=region,
+        )
+    elif kind == "SMALLTALK":
+        reply = conversation.smalltalk_reply(language, region=region)
+    else:
+        reply = conversation.out_of_scope_reply(language, region=region)
+
+    plan = Plan(
+        query_id=query_id,
+        text=normalise(query.text),
+        language=language,
+        intents=[],
+        steps=[],
+        lat=lat,
+        lon=lon,
+        when=when,
+        vessel_class=query.vessel_class,
+        # DISTRESS is somebody deciding whether to act right now; the other four kinds
+        # answer a question about the system or a concept, never a go/no-go decision.
+        answer_kind="ADVISORY" if kind == "DISTRESS" else "INFORMATIONAL",
+        notes=[
+            f"Utterance classified {kind} at the conversational front door "
+            "(agents/conversation.py::classify_utterance); the planner and every "
+            "specialist were skipped.",
+        ],
+    )
+
+    step = new_step(
+        query_id,
+        "UserInteraction",
+        "plan",
+        args={"text": query.text, "language": language, "utterance_kind": kind},
+        result_digest=digest({"kind": kind, "text_len": len(reply.text)}),
+        why=(
+            "conversation.classify_utterance sorted this utterance before the planner "
+            f"ever ran; {kind} answers from a fixed door, never from the tool pipeline."
+        ),
+    )
+    try:
+        traces.append(step)
+    except Exception:  # noqa: BLE001 — a trace-store failure must never break an answer
+        pass
+
+    answer = AgentAnswer(
+        query_id=query_id,
+        language=language,
+        text=reply.text,
+        verdict=None,
+        evidence=list(reply.observations),
+        trace=[step],
+        payloads={"utterance_kind": kind, **reply.payload},
+    )
+
+    return QueryOutcome(
+        answer=answer,
+        plan=plan,
+        tool_results=[],
+        trace=[step],
+        verdict=None,
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+        missing=[],
+        specialists_used=["UserInteraction"],
     )
 
 

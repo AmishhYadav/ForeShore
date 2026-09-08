@@ -33,6 +33,7 @@ TOOL_MODULES: tuple[str, ...] = (
     "discovery",      # 16 list_available_data
     "fleet_tools",    # 17 find_vessels_near_boundary
     "productive_waters",  # 18 find_productive_waters
+    "envelope_tools",  # 19 get_decision_envelope
 )
 
 _FAILED: dict[str, str] = {}

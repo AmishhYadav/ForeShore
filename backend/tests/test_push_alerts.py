@@ -243,3 +243,84 @@ def test_all_active_orders_oldest_first_within_same_level():
 def test_all_active_empty_store_is_empty_list():
     store = AlertStore()
     assert store.all_active() == []
+
+
+# --------------------------------------------------------------------------------------
+# Weather-shaped dedupe keys (``push/loop.py``'s ``f"{vessel_id}:weather:{variable}:
+# {level}"``).
+#
+# Unlike a geofence key (``vessel:class:id``, stable as the alert's level changes), the
+# weather key folds the level itself in, so ``push/loop.py`` never asks this store to
+# compare two ranks under one key -- a worsening reading gets a brand-new key, and the
+# per-tick stale-key sweep (the same one that clears a geofence alert the boat has
+# sailed out of range of) clears the old level's key in the same pass. These tests pin
+# that AlertStore's existing primitives -- upsert() and clear() -- compose into exactly
+# that behaviour: dedupe within a level, and a clean handoff across a level change with
+# nothing left orphaned in the active set.
+# --------------------------------------------------------------------------------------
+
+
+def _make_weather_alert(
+    *,
+    alert_id: str = "w1",
+    vessel_id: str = "sim-00",
+    variable: str = "significant_wave_height",
+    level: str = "WARN",
+    created_at=None,
+) -> Alert:
+    dedupe_key = f"{vessel_id}:weather:{variable}:{level}"
+    return Alert(
+        alert_id=alert_id,
+        vessel_id=vessel_id,
+        kind="weather",
+        level=level,  # type: ignore[arg-type]
+        title_en="High waves",
+        title_ta="அதிக அலைகள்",
+        body_en="Waves near you are above your boat's limit.",
+        body_ta="உங்கள் அருகில் அலைகள் உங்கள் படகின் வரம்பை மீறியுள்ளன.",
+        lat=9.3,
+        lon=79.4,
+        created_at=created_at or utcnow(),
+        dedupe_key=dedupe_key,
+    )
+
+
+def test_weather_key_same_level_duplicate_is_suppressed():
+    store = AlertStore()
+    first = _make_weather_alert(alert_id="w1", level="WARN")
+    store.upsert(first)
+
+    second = _make_weather_alert(alert_id="w2", level="WARN")  # identical dedupe_key
+    assert store.upsert(second) is None
+    assert len(store.active_for_vessel("sim-00")) == 1
+
+
+def test_weather_key_level_change_via_clear_then_upsert_leaves_only_the_new_alert():
+    """Documents the exact sequence push/loop.py's tick() runs across a level change:
+    the old-level key is cleared (the stale-key sweep) and the new-level key is
+    upserted fresh -- never a same-key rank comparison, because the level lives inside
+    the key itself for this alert kind."""
+    store = AlertStore()
+    warn = _make_weather_alert(alert_id="w1", level="WARN")
+    store.upsert(warn)
+
+    store.clear(warn.dedupe_key)
+    critical = _make_weather_alert(alert_id="w2", level="CRITICAL")
+    result = store.upsert(critical)
+
+    assert result is critical  # a fresh emission, not a suppressed duplicate
+    active = store.active_for_vessel("sim-00")
+    assert len(active) == 1
+    assert active[0].level == "CRITICAL"
+    assert active[0].dedupe_key == "sim-00:weather:significant_wave_height:CRITICAL"
+    assert ALERT_RANK["CRITICAL"] > ALERT_RANK["WARN"]  # the replacement is strictly worse
+
+
+def test_weather_key_recovery_clears_without_a_replacement():
+    store = AlertStore()
+    critical = _make_weather_alert(alert_id="w1", level="CRITICAL")
+    store.upsert(critical)
+
+    store.clear(critical.dedupe_key)  # conditions recovered -- no replacement key upserted
+
+    assert store.active_for_vessel("sim-00") == []

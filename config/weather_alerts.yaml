@@ -1,0 +1,50 @@
+# Weather / lightning push-alert copy.
+#
+# Mirrors config/geofence.yaml's shape exactly -- per trigger, per level, per language,
+# with {placeholder} text -- so a region swap re-homes weather-alert wording the same way
+# it already re-homes geofence wording, and so push/weather_copy.py never hand-builds a
+# sentence in Python.
+#
+# CLAUDE.md is explicit that this text is spliced straight to a fisherman's screen: no
+# enum codes, no internal variable identifiers, no tool names. Write "waves are running
+# above your boat's limit", never "significant_wave_height threshold BREACH". The
+# {value}/{limit} placeholders are always filled from a real sourced Observation and a
+# real config/vessels.yaml limit -- never invented here.
+#
+# Only two levels exist for weather (WARN, CRITICAL) -- there is no "inside" a wind or
+# wave threshold the way a boat can be inside a geofence polygon, so no `breach` block.
+
+variables:
+  significant_wave_height:
+    title:
+      en: High waves
+      ta: அதிக அலைகள்
+    warn:
+      en: "Waves near you are running about {value} m, above your boat's comfortable {limit} m limit. Watch conditions and consider heading back."
+      ta: "உங்கள் அருகில் அலைகள் தோராயமாக {value} மீ ஆக உள்ளன, உங்கள் படகின் வசதியான {limit} மீ வரம்பை மீறியுள்ளது. நிலைமையை கவனித்து திரும்பிச் செல்ல யோசியுங்கள்."
+    critical:
+      en: "Waves near you are running about {value} m, well above your boat's safe {limit} m limit. Turn back now."
+      ta: "உங்கள் அருகில் அலைகள் தோராயமாக {value} மீ ஆக உள்ளன, உங்கள் படகின் பாதுகாப்பான {limit} மீ வரம்பை பெரிதும் மீறியுள்ளது. உடனே திரும்புங்கள்."
+
+  wind:
+    title:
+      en: Strong wind
+      ta: பலத்த காற்று
+    warn:
+      en: "Wind near you is about {value} kn, above your boat's comfortable {limit} kn limit. Watch conditions closely."
+      ta: "உங்கள் அருகில் காற்று தோராயமாக {value} கடல் மைல்/மணி ஆக உள்ளது, உங்கள் படகின் வசதியான {limit} வரம்பை மீறியுள்ளது. நிலைமையை உன்னிப்பாக கவனியுங்கள்."
+    critical:
+      en: "Wind near you is about {value} kn, well above your boat's safe {limit} kn limit. Head to shore now."
+      ta: "உங்கள் அருகில் காற்று தோராயமாக {value} கடல் மைல்/மணி ஆக உள்ளது, உங்கள் படகின் பாதுகாப்பான {limit} வரம்பை பெரிதும் மீறியுள்ளது. உடனே கரைக்குத் திரும்புங்கள்."
+
+  lightning:
+    title:
+      en: Lightning risk
+      ta: மின்னல் ஆபத்து
+    # IMD's district nowcast is a binary "there is an active warning or there is not" --
+    # there is no intermediate reading to make a WARN band meaningful, so this fires
+    # straight to CRITICAL whenever the nowcast has anything other than NIL for the
+    # district. See push/loop.py's docstring for why CAPE is never substituted here.
+    critical:
+      en: "IMD has issued a lightning/thunderstorm warning for {district}. Get off the water and take shelter now."
+      ta: "{district} பகுதிக்கு IMD மின்னல்/இடிமுழக்க எச்சரிக்கை வெளியிட்டுள்ளது. உடனே கடலைவிட்டு வெளியேறி பாதுகாப்பான இடத்திற்குச் செல்லுங்கள்."

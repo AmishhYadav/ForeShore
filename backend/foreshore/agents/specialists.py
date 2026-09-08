@@ -62,6 +62,52 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
         ),
         ps_capability="marine data discovery",
     ),
+    # PlanningAgent is defined immediately after MarineDataDiscovery, and this placement
+    # is load-bearing, not cosmetic. `list_available_data` is MarineDataDiscovery's sole
+    # tool and was once PlanningAgent's only tool too, because horizon selection means
+    # reading the same coverage report MarineDataDiscovery reports on, not fetching a
+    # second one. PlanningAgent also owns `get_decision_envelope` (shared with
+    # RiskAssessment, defined later in this tuple) — the tool that turns a resolved
+    # horizon into an operational plan is the planning specialist's tool too, not just
+    # the risk specialist's.
+    # `specialist_for_tool` (below) resolves a shared tool to whichever Specialist is
+    # defined *first* in this tuple — first-match-wins over an ordered tuple, so it is
+    # already deterministic, but the order itself is a choice, not an accident, and
+    # several existing specialists already share tools this same way (get_exclusion_zones,
+    # check_geofences, find_nearest_pfz, find_vessels_near_boundary, get_governing_advisory,
+    # get_hazard_alerts, nearest_harbour). MarineDataDiscovery stays first here so
+    # `specialist_for_tool("list_available_data")` keeps resolving to MarineDataDiscovery —
+    # unchanged from before PlanningAgent existed, and matching `planner._step`'s own
+    # explicit fallback of "MarineDataDiscovery" when no owner is found. PlanningAgent
+    # still calls the tool itself when it needs to; it just is not the specialist a
+    # planning step naming that tool gets attributed to in the trace.
+    Specialist(
+        name="PlanningAgent",
+        role=(
+            "Decide what time window a question is really about, and what data that "
+            "window needs, before the rest of the plan commits to gathering it."
+        ),
+        tools=("list_available_data", "get_decision_envelope"),
+        system=(
+            "The horizon a question is really asking about — right now, tonight, "
+            "tomorrow morning, this weekend — is resolved deterministically before you "
+            "are ever asked; you never guess one from wording yourself. Your job is to "
+            "read list_available_data's coverage report against that resolved horizon: "
+            "a forecast the newest granule cannot yet reach, or an archive product whose "
+            "currency has already lapsed for the window in question, is a finding you "
+            "name now, not a gap left for a later specialist to discover on its own. "
+            "You decide what the question needs answered and from what data depth — you "
+            "do not answer it yourself.\n"
+            "get_decision_envelope turns the single-instant verdict into an operational "
+            "plan: when the window closes, when it next opens, and when to turn back. It "
+            "evaluates the same deterministic verdict engine once per forecast step — it "
+            "never proposes a level of its own — and steps beyond the governing "
+            "bulletin's validity come back closed because no bulletin authorises them "
+            "yet, not because the sea is dangerous. Say so plainly rather than letting it "
+            "read as a bad forecast."
+        ),
+        ps_capability="planning",
+    ),
     Specialist(
         name="WeatherIntelligence",
         role="Wind, gusts, precipitation, visibility, lightning and cyclone warnings.",
@@ -115,14 +161,18 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
     Specialist(
         name="RiskAssessment",
         role="Turn the evidence into one of three verdicts for this specific boat.",
-        tools=("get_governing_advisory", "evaluate_verdict"),
+        tools=("get_governing_advisory", "evaluate_verdict", "get_decision_envelope"),
         system=(
             "There are exactly three verdicts: GO, GO_WITH_CAUTION, DO_NOT_ADVISE. "
             "DO_NOT_ADVISE is a designed outcome for missing, stale or contradictory "
             "input, not an error, and it must hand off to a named human authority.\n"
             "You cannot make a verdict more permissive than the governing IMD bulletin. "
             "A deterministic ceiling check runs after you and will overrule you if you "
-            "try, so propose the cautious reading."
+            "try, so propose the cautious reading.\n"
+            "get_decision_envelope is the same verdict, evaluated once per forecast "
+            "step instead of once: use it when the question is about a window of time "
+            "rather than this instant — when the trip closes, when it next opens, when "
+            "to turn back."
         ),
         ps_capability="risk assessment",
     ),
@@ -164,6 +214,38 @@ SPECIALIST_DEFS: tuple[Specialist, ...] = (
         ),
         ps_capability="reporting",
     ),
+    Specialist(
+        name="UserInteraction",
+        role=(
+            "Own the conversational surface: which door an utterance came through, what "
+            "to ask when a reference cannot be resolved, and what to read back before a "
+            "voice answer ships."
+        ),
+        #: No tools, deliberately. This specialist's job is entirely around the safety
+        #: spine — sorting an utterance before the plan runs, asking one clarifying
+        #: question, reading an answer back — never inside it. A specialist that touched
+        #: `verdict_tools` or a data source would be doing RiskAssessment's or a data
+        #: specialist's job under a different name; restriction is what keeps the ten
+        #: agents a real division of labour rather than ten names for one bag of tools.
+        tools=(),
+        system=(
+            "conversation.classify_utterance sorts every utterance — distress, a real "
+            "marine question, a request for the capability catalogue, a definition, "
+            "smalltalk, or out of scope — before anything else runs. It is deterministic "
+            "and model-free on purpose: Tamil ASR on fishing vocabulary runs 15-20% word "
+            "error rate, and a decision this load-bearing cannot ride on a guess from a "
+            "misheard model call. Distress always wins outright, over every other "
+            "reading of the same words.\n"
+            "When a follow-up names something the plan cannot resolve — 'what about "
+            "there', 'is it safe now' with no earlier position or time to anchor to — "
+            "you ask the one clarifying question that unblocks it, rather than letting a "
+            "specialist guess a position or a time it was never given. On the voice path "
+            "you compose the spoken readback of the verdict and the numbers that matter, "
+            "in the fisherman's own words, so a misheard word is caught before a boat "
+            "acts on it rather than after."
+        ),
+        ps_capability="user interaction",
+    ),
 )
 
 SPECIALISTS_BY_NAME: dict[str, Specialist] = {s.name: s for s in SPECIALIST_DEFS}
@@ -176,6 +258,16 @@ def get(name: str) -> Specialist:
 
 
 def specialist_for_tool(tool: str) -> str | None:
+    """The specialist a planning step naming ``tool`` gets attributed to.
+
+    Several tools are legitimately callable by more than one specialist (see the
+    ``PlanningAgent`` comment above for the fullest example). This scans ``SPECIALIST_DEFS``
+    — an ordered tuple, iterated in that order, never a set — so a shared tool always
+    resolves to whichever specialist is written first for it. That resolution is
+    deterministic by construction; where more than one specialist shares a tool, the order
+    itself was chosen and is explained in a comment beside the affected definitions, not
+    left to fall out of whatever order the tuple happened to be written in.
+    """
     for s in SPECIALIST_DEFS:
         if tool in s.tools:
             return s.name

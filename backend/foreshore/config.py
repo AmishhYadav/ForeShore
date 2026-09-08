@@ -276,6 +276,42 @@ class RoutingConfig:
     heuristic: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class GlossaryTerm:
+    """One curated marine concept, for the conversational front door's CONCEPT door.
+
+    ``sourced_from`` is the provenance rule invariant 3 enforces on this file: ``en``/
+    ``ta`` may name a number only when this is set, and the handler that renders the
+    term (``agents/conversation.py::concept_reply``) must then attach matching
+    :class:`~foreshore.models.Observation` records for those numbers. ``None`` means the
+    prose is a plain definition and must stay digit-free — enforced by
+    ``backend/tests/test_conversation.py`` over the whole loaded glossary.
+    """
+
+    key: str
+    aliases: tuple[str, ...]
+    en: str
+    ta: str | None
+    sourced_from: str | None
+
+
+@dataclass(frozen=True)
+class GlossaryConfig:
+    terms: tuple[GlossaryTerm, ...]
+
+    def aliases(self) -> tuple[str, ...]:
+        """Every alias across every term, flattened — what
+        ``conversation.classify_utterance(..., glossary_terms=...)`` and
+        ``conversation.is_definitional`` match against."""
+        return tuple(a for term in self.terms for a in term.aliases)
+
+    def get(self, key: str) -> GlossaryTerm | None:
+        for term in self.terms:
+            if term.key == key:
+                return term
+        return None
+
+
 # --------------------------------------------------------------------------------------
 
 
@@ -379,6 +415,23 @@ def load_routing_config() -> RoutingConfig:
         shallow={k: float(v) for k, v in (d.get("shallow") or {}).items()},
         heuristic=d.get("heuristic", {}),
     )
+
+
+@lru_cache(maxsize=1)
+def load_glossary() -> GlossaryConfig:
+    d = _read_yaml(CONFIG_DIR / "glossary.yaml")
+    terms: list[GlossaryTerm] = []
+    for t in d.get("terms", []):
+        terms.append(
+            GlossaryTerm(
+                key=str(t["key"]),
+                aliases=tuple(str(a) for a in (t.get("aliases") or [])),
+                en=str(t.get("en", "")).strip(),
+                ta=(str(t["ta"]).strip() if t.get("ta") else None),
+                sourced_from=t.get("sourced_from"),
+            )
+        )
+    return GlossaryConfig(terms=tuple(terms))
 
 
 @dataclass(frozen=True)
@@ -491,6 +544,7 @@ def reset_caches() -> None:
     load_geofence_config.cache_clear()
     load_routing_config.cache_clear()
     load_contact_directory.cache_clear()
+    load_glossary.cache_clear()
 
 
 ACTIVE_REGION_ENV = "FORESHORE_REGION"
@@ -512,6 +566,7 @@ __all__ = [
     "Mode", "mode", "is_fixture", "env", "REPO_ROOT", "CONFIG_DIR", "DATA_DIR", "STATIC_DIR",
     "CACHE_DIR", "FIXTURE_DIR", "ARTIFACT_DIR", "Port", "RegionConfig", "VesselClass",
     "VesselCatalogue", "GeofenceCopy", "GeofenceConfig", "RoutingConfig",
+    "GlossaryTerm", "GlossaryConfig", "load_glossary",
     "ContactEntry", "ContactDirectory", "load_contact_directory",
     "load", "load_region", "load_vessels", "load_geofence_config", "load_routing_config",
     "reset_caches", "set_active_region",

@@ -108,6 +108,18 @@ INTENT_CUES: dict[Intent, tuple[str, ...]] = {
         "what if", "instead of", "rather than", "compare", "leave at", "earlier", "later",
         "என்றால்", "pathilaga",
     ),
+    # "When can I go out?", "how long have I got?", "when must I turn back?" — the
+    # operational-planning questions verdict/envelope.py exists to answer: the same
+    # deterministic verdict, evaluated once per forecast step, rather than once. These
+    # are somebody deciding whether and when to put to sea over a window of time, not a
+    # neutral fact question, so they are also listed in DECISION_CUES below — see the
+    # comment there.
+    "operational_planning": (
+        "when can i go", "how long", "turn back", "window", "later today",
+        "next few days", "best time", "what time should i",
+        "எப்போது போகலாம்", "எவ்வளவு நேரம்", "திரும்ப வேண்டும்",
+        "eppo pogalaam", "evvalavu neram", "thirumba vendum",
+    ),
     # A shore-console question about the tracked fleet rather than about the asker's own
     # boat. Cues are deliberately plural or explicitly qualified: "is my boat safe" is a
     # question about one boat's verdict, not a fleet query, and must not pull the fleet
@@ -123,10 +135,19 @@ INTENT_CUES: dict[Intent, tuple[str, ...]] = {
 #: before the information interrogatives below and they win outright: "what is the wave
 #: height, should I go?" is a decision, and the decision is what the reader needs first.
 #: Planning a passage is a decision too — a route question is somebody about to depart.
+#: `operational_planning` cues are included for the same reason: "when can I go out?",
+#: "how long have I got?" and "when must I turn back?" are the same go/no-go decision
+#: stretched over a window of time rather than asked about one instant — the module
+#: docstring for `verdict/envelope.py` states this outright ("Everything else in
+#: FORESHORE answers 'can I go now' ... the questions are when can I go, how long have I
+#: got, and when must I turn back"). Without this, "how long have I got" would fall
+#: through to the plain INFORMATION_CUES match on "how long" and answer with a fact
+#: about the world instead of leading with the envelope's own verdict-shaped answer.
 DECISION_CUES: tuple[str, ...] = (
     INTENT_CUES["safety_check"]
     + INTENT_CUES["route"]
     + INTENT_CUES["scenario"]
+    + INTENT_CUES["operational_planning"]
     + ("put to sea", "set out", "head out", "depart", "sail", "venture out", "launch")
 )
 
@@ -458,6 +479,13 @@ def plan(
                     "Collect cyclone polygons, high-wave cells and hard boundaries so the "
                     "router treats them as impassable rather than merely expensive.",
                     {"when": when.isoformat()})
+        elif intent == "operational_planning":
+            add("get_decision_envelope",
+                "Evaluate the deterministic verdict once per forecast step across the "
+                "INCOIS OSF horizon, so the answer names when the window closes, when "
+                "it next opens, and -- given a return passage time -- when to turn "
+                "back, not just whether to go this instant.",
+                {**pos, "vessel_class": vessel_class})
         elif intent == "geofence":
             if "fleet" in intents:
                 # "Which vessels are closest to the IMBL" cues both intents, but the
