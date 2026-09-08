@@ -124,6 +124,17 @@
   opacity: 0.6;
 }
 
+/* Productive waters (tool 18): filled square with a SOLID border, in the colour passed
+   inline via `style.background`/`style.borderColor` — deliberately unlike both the plain
+   filled dot (official PFZ) and the dashed hollow square (derived PFZ) above, matching the
+   map layer's own solid-border-plus-fill treatment. */
+.map-view__swatch--productive {
+  border-radius: 2px;
+  border-width: 1.5px;
+  border-style: solid;
+  opacity: 0.85;
+}
+
 /* On narrow phones the legend wraps into two columns instead of overflowing
    the map or shrinking its text below readable size (11px is the spec floor). */
 @media (max-width: 420px) {
@@ -171,6 +182,10 @@
   color: var(--verdict-caution);
 }
 
+.map-view__note--productive {
+  color: var(--productive-waters);
+}
+
 /* Own live device position marker, built directly as a DOM node by
    MapView.tsx (maplibregl.Marker), not through JSX — same "rendered but
    unstyled" bug as the rest of this file, so it is fixed here too. Same dot
@@ -200,4 +215,130 @@
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
+}
+
+/* ── Productive-Waters Rank Badges (tool 18) ────────────────────────────────
+   One small numbered DOM marker per zone centroid, built directly by MapView.tsx
+   (maplibregl.Marker) the same way own-position-marker above is — a GL symbol layer's
+   `text-field` needs a `glyphs` URL this map's style never declares, so the rank number
+   is plain HTML/CSS text instead. Tappable: opens the zone's own popup (below). */
+.mv-rank-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--productive-waters);
+  color: var(--ink-950);
+  font-size: 11px;
+  font-weight: 700;
+  border: 2px solid var(--ink-950);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+/* ── Productive-Waters Popup ─────────────────────────────────────────────────
+   maplibre-gl.css ships `.maplibregl-popup-content { background: #fff }`, and this
+   surface's body text is a light ink on a dark ground — same white-box-over-dark-chart
+   problem console.css documents for FleetMap's `.fm-wrap .maplibregl-popup-content`, and
+   the same fix: theme the popup to this surface's own dark ground rather than leave the
+   library default showing through. Scoped under `.map-view-wrap` for the same specificity
+   reason console.css scopes under `.fm-wrap` — maplibre-gl.css is imported by this
+   component too and would otherwise land after this file in the bundle. */
+.map-view-wrap {
+  --mv-popup-bg: #091a28;
+}
+
+.map-view-wrap .maplibregl-popup {
+  z-index: 10;
+}
+
+.map-view-wrap .maplibregl-popup-content {
+  background: var(--mv-popup-bg);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
+  padding: 12px 14px;
+  color: var(--marine-on-surface);
+}
+
+.map-view-wrap .maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.map-view-wrap .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.map-view-wrap .maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--mv-popup-bg);
+}
+
+.map-view-wrap .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.map-view-wrap .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.map-view-wrap .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--mv-popup-bg);
+}
+
+.map-view-wrap .maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--mv-popup-bg);
+}
+
+.map-view-wrap .maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--mv-popup-bg);
+}
+
+.map-view-wrap .maplibregl-popup-close-button {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  color: var(--marine-on-surface-variant);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.mv-popup {
+  font-size: 13px;
+  color: var(--marine-on-surface);
+}
+
+.mv-popup__title {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+/* Same caution-coloured "what this is" callout convention as own-position-marker's dark
+   scrim label and the note lines above — always visible, never only on hover, since
+   CLAUDE.md requires this never read as the official INCOIS advisory. */
+.mv-popup__disclaimer {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--verdict-caution);
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+.mv-popup table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mv-popup th,
+.mv-popup td {
+  padding: 3px 0;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+
+.mv-popup th {
+  font-weight: 500;
+  color: var(--marine-on-surface-variant);
+  width: 38%;
+}
+
+.mv-popup td {
+  color: var(--ink-50);
+  font-weight: 500;
+}
+
+.mv-popup tr:last-child th,
+.mv-popup tr:last-child td {
+  border-bottom: none;
 }

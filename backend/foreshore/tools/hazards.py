@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import Any
 
 from ..models import Observation, ToolResult, utcnow
+from ..verdict.ceiling import local_clock
 from .registry import registry
 
 _GDACS_SOURCE_ID = "gdacs_tc"
@@ -233,10 +234,14 @@ def get_hazard_alerts(
         if gdacs_ok:
             checked.append("GDACS tropical-cyclone event list")
         if imd_ok:
-            checked.append("IMD cyclone track (imd:Cyclone_Track_V)")
+            # The GeoServer layer name (imd:Cyclone_Track_V) belongs in the trace, not in
+            # a sentence a fisherman reads; likewise the ISO instant below, which is also
+            # in the wrong timezone for the person reading it. Both stay on the payload
+            # and the provenance record.
+            checked.append("the IMD cyclone track")
         summary = (
             f"No active tropical cyclone affecting {region.display_name_en} as of "
-            f"{when_dt.isoformat()}. Checked: {' and '.join(checked)}."
+            f"{local_clock(when_dt, region)}. Checked: {' and '.join(checked)}."
         )
         if partial:
             summary += f" One source could not be checked ({'; '.join(errors)})."

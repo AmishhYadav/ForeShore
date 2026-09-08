@@ -13,9 +13,17 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./map.css";
-import { getHazards, getPfzDerived, getPfzOfficial } from "@shared/api";
-import type { HazardsPayload, PfzDerivedPayload, PfzOfficialPayload, RegionInfo } from "@shared/types";
-import { basemapCenterLngLat, severityColor, toLngLat } from "./format";
+import { getHazards, getPfzDerived, getPfzOfficial, getProductiveWaters } from "@shared/api";
+import type {
+  HazardsPayload,
+  Observation,
+  PfzDerivedPayload,
+  PfzOfficialPayload,
+  ProductiveWatersPayload,
+  RegionInfo,
+  ToolResultEnvelope,
+} from "@shared/types";
+import { basemapCenterLngLat, formatClock, severityColor, toLngLat } from "./format";
 import type { OwnPosition } from "./useOwnPosition";
 
 // Mirrors index.css's --ink-800 / --ink-700 — maplibre paint properties need literal
@@ -33,6 +41,11 @@ const PFZ_DERIVED_COLOR = "#7c93ff";
 const HAZARD_FILL_COLOR = "#e0a815"; // == index.css --severity-hazard: same meaning as the
 // geofence layer's dynamic HAZARD_EXCLUSION class, so it deliberately reuses that colour.
 const HAZARD_TRACK_COLOR = "#ff5da2";
+// Mirrors index.css's --productive-waters — tool 18's chlorophyll+SST zones (a different
+// PS bullet than the derived-PFZ layer above). Deliberately a third hue plus a distinct
+// treatment (solid border, not dashed; numbered rank badges, which neither PFZ layer has)
+// so this can never be mistaken for the official line or the derived-PFZ fill.
+const PRODUCTIVE_WATERS_COLOR = "#84cc16";
 
 /** One configured raster chart. Both the primary and the fallback are described by the
  * region config; this component only knows there may be two, never which servers. */
@@ -127,6 +140,75 @@ function polygonOnly(fc: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
   return { type: "FeatureCollection", features: fc.features.filter((f) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon") };
 }
 
+/** A productive-waters zone's own numbers (mean chlorophyll, mean SST) are only dated on
+ * the envelope's `observations` array (each carries its own `valid_time`), never on the
+ * GeoJSON feature itself — see `ProductiveWatersPayload`'s doc comment in shared/types.ts.
+ * Looked up by `zone_id` (every observation for a zone shares that qualifier) and the
+ * observation's own `variable` name, so a click never has to guess which reading is which. */
+function zoneObservationValidTime(
+  observations: Observation[] | undefined,
+  zoneId: unknown,
+  variable: string,
+): string | null {
+  const obs = observations?.find((o) => o.variable === variable && o.qualifiers?.["zone_id"] === zoneId);
+  return obs?.valid_time ?? null;
+}
+
+function row(label: string, value: string): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  const th = document.createElement("th");
+  th.textContent = label;
+  const td = document.createElement("td");
+  td.textContent = value;
+  tr.append(th, td);
+  return tr;
+}
+
+/** One popup per productive-waters zone, opened on click/tap — the only per-feature
+ * inspection surface this component has, so it carries every number CLAUDE.md invariant
+ * 3 requires and names both sources in words, never an id. Structurally mirrors
+ * FleetMap.tsx's `buildGeofencePopup`/`buildVesselPopup` (title + a caution-coloured
+ * "what this is" line + a label/value table) — same convention, this component's own
+ * `mv-popup` class names rather than the console's `fm-popup` ones. */
+function buildProductiveWaterPopup(
+  props: Record<string, unknown>,
+  payload: ProductiveWatersPayload,
+  observations: Observation[] | undefined,
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mv-popup";
+
+  const title = document.createElement("div");
+  title.className = "mv-popup__title";
+  title.textContent = `Productive water — rank #${props["zone_rank"]}`;
+  wrap.appendChild(title);
+
+  const disclaimer = document.createElement("div");
+  disclaimer.className = "mv-popup__disclaimer";
+  disclaimer.textContent = "FORESHORE indicative derivation — not the official INCOIS PFZ advisory.";
+  wrap.appendChild(disclaimer);
+
+  const zoneId = props["zone_id"];
+  const chlDate = zoneObservationValidTime(observations, zoneId, "zone_mean_chlorophyll");
+  const sstDate = zoneObservationValidTime(observations, zoneId, "zone_mean_sea_surface_temperature");
+
+  const table = document.createElement("table");
+  table.appendChild(row("Distance", `${Number(props["distance_nm"]).toFixed(1)} nm`));
+  table.appendChild(row("Bearing", `${Math.round(Number(props["bearing_deg"]))}°`));
+  table.appendChild(row("Area", `${Number(props["area_nm2"]).toFixed(1)} nm²`));
+  table.appendChild(row(
+    "Mean chlorophyll",
+    `${Number(props["mean_chlorophyll_mg_m3"]).toFixed(2)} mg/m³ (${payload.chlorophyll_source ?? "source unavailable"}${chlDate ? `, ${formatClock(chlDate)}` : ""})`,
+  ));
+  table.appendChild(row(
+    "Mean SST",
+    `${Number(props["mean_sst_degc"]).toFixed(1)} °C (${payload.sst_source ?? "source unavailable"}${sstDate ? `, ${formatClock(sstDate)}` : ""})`,
+  ));
+  wrap.appendChild(table);
+
+  return wrap;
+}
+
 export function MapView({
   region,
   position,
@@ -145,8 +227,17 @@ export function MapView({
   const routeLayerAddedRef = useRef(false);
   const pfzOfficialLayerAddedRef = useRef(false);
   const pfzDerivedLayerAddedRef = useRef(false);
+  const productiveWatersLayerAddedRef = useRef(false);
   const hazardLayerAddedRef = useRef(false);
   const hazardTrackLayerAddedRef = useRef(false);
+  //: One DOM marker + popup per ranked zone, keyed by zone_id — reconciled the same way
+  //  FleetMap.tsx reconciles vessel markers (add new, update existing, remove stale) since
+  //  the rank badge needs a real text glyph, and this map's style declares no `glyphs` URL
+  //  for a GL symbol layer to fetch one from (see the own-position-marker DOM label above
+  //  for the same constraint already documented in this file).
+  const productiveWatersMarkersRef = useRef<Map<string, { marker: maplibregl.Marker; popup: maplibregl.Popup }>>(
+    new Map(),
+  );
   const centeredOnceRef = useRef(false);
   const sizedOnceRef = useRef(false);
   //: Read inside the ResizeObserver, which outlives the render that created it — a
@@ -160,6 +251,9 @@ export function MapView({
   const [mapReady, setMapReady] = useState(false);
   const [pfzOfficial, setPfzOfficial] = useState<PfzOfficialPayload | null>(null);
   const [pfzDerived, setPfzDerived] = useState<PfzDerivedPayload | null>(null);
+  //: Kept as the full envelope (not just `.payload`) — the per-zone data date shown in
+  //  each popup lives on the sibling `observations` array, not inside the payload itself.
+  const [productiveWaters, setProductiveWaters] = useState<ToolResultEnvelope<ProductiveWatersPayload> | null>(null);
   const [hazards, setHazards] = useState<HazardsPayload | null>(null);
 
   // -- create the map once region config is known --------------------------------------
@@ -310,6 +404,12 @@ export function MapView({
       routeLayerAddedRef.current = false;
       pfzOfficialLayerAddedRef.current = false;
       pfzDerivedLayerAddedRef.current = false;
+      productiveWatersLayerAddedRef.current = false;
+      // `map.remove()` above already tears down every marker DOM node it owns, same as
+      // `markerRef` (own position) just above never calling `.remove()` on itself either —
+      // this only drops the now-stale references so a region swap starts the reconcile
+      // effect below from an empty map.
+      productiveWatersMarkersRef.current.clear();
       hazardLayerAddedRef.current = false;
       hazardTrackLayerAddedRef.current = false;
     };
@@ -441,6 +541,16 @@ export function MapView({
       })
       .catch((err) => console.warn("[MapView] failed to fetch hazards:", err));
 
+    // Ranked from the vessel's own position, same reasoning `getPfzOfficial` above uses
+    // lat/lon rather than the region centre — "productive waters near me", not "near the
+    // region". Kept as the full envelope (see the `productiveWaters` state comment) so the
+    // popup can date each zone from its own `observations` entry.
+    getProductiveWaters({ bbox, lat: position.lat, lon: position.lon })
+      .then((res) => {
+        if (!cancelled) setProductiveWaters(res);
+      })
+      .catch((err) => console.warn("[MapView] failed to fetch productive-waters zones:", err));
+
     return () => {
       cancelled = true;
     };
@@ -508,6 +618,99 @@ export function MapView({
     else map.once("idle", apply);
   }, [mapReady, pfzDerived]);
 
+  // -- productive-waters zones (tool 18): fill + SOLID border, deliberately unlike both
+  // PFZ layers above — official is a line with no fill, derived is a fill with a DASHED
+  // border; a solid border plus the numbered rank badges below (added in the next effect)
+  // means this can't be mistaken for either at a glance. Sits below the geofence layers
+  // (added by the effect above, mounted earlier) for the same reason pfz-derived does —
+  // geofence severity stays the top safety layer — and is otherwise independent of it. ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const data = productiveWaters?.payload.zones ?? EMPTY_FC;
+
+    const apply = () => {
+      if (!productiveWatersLayerAddedRef.current) {
+        map.addSource("productive-waters", { type: "geojson", data });
+        map.addLayer({
+          id: "productive-waters-fill",
+          type: "fill",
+          source: "productive-waters",
+          paint: { "fill-color": PRODUCTIVE_WATERS_COLOR, "fill-opacity": 0.22 },
+        });
+        map.addLayer({
+          id: "productive-waters-line",
+          type: "line",
+          source: "productive-waters",
+          paint: { "line-color": PRODUCTIVE_WATERS_COLOR, "line-width": 2, "line-opacity": 0.95 },
+        });
+        productiveWatersLayerAddedRef.current = true;
+      } else {
+        (map.getSource("productive-waters") as maplibregl.GeoJSONSource | undefined)?.setData(data);
+      }
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once("idle", apply);
+  }, [mapReady, productiveWaters]);
+
+  // -- productive-waters rank badges: one small numbered DOM marker per zone centroid, so
+  // rank reads at a glance without a click (requirement: "rank legible without clicking").
+  // A GL symbol layer's `text-field` needs a `glyphs` URL configured on the style, which
+  // this map's minimal style never declares (see the own-position-marker DOM label earlier
+  // in this file for the same constraint) — DOM markers sidestep that the same way. Click
+  // opens the same maplibregl.Popup mechanism FleetMap.tsx already uses for its own
+  // vessel/geofence/harbour popups, themed here under this file's own `mv-` class prefix.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const features = productiveWaters?.payload.zones.features ?? [];
+    const seen = new Set<string>();
+
+    for (const feature of features) {
+      const props = (feature.properties ?? {}) as Record<string, unknown>;
+      const zoneId = String(props["zone_id"] ?? "");
+      if (!zoneId) continue;
+      seen.add(zoneId);
+      const lat = Number(props["centroid_lat"]);
+      const lon = Number(props["centroid_lon"]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const existing = productiveWatersMarkersRef.current.get(zoneId);
+      if (existing) {
+        existing.marker.setLngLat(toLngLat([lat, lon]));
+        if (productiveWaters) {
+          existing.popup.setDOMContent(buildProductiveWaterPopup(props, productiveWaters.payload, productiveWaters.observations));
+        }
+        continue;
+      }
+
+      const el = document.createElement("div");
+      el.className = "mv-rank-badge";
+      el.textContent = String(props["zone_rank"] ?? "?");
+      const popup = new maplibregl.Popup({ closeButton: true, offset: 12, maxWidth: "260px" });
+      if (productiveWaters) {
+        popup.setDOMContent(buildProductiveWaterPopup(props, productiveWaters.payload, productiveWaters.observations));
+      }
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        popup.setLngLat(toLngLat([lat, lon])).addTo(map);
+      });
+      const marker = new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat(toLngLat([lat, lon])).addTo(map);
+      productiveWatersMarkersRef.current.set(zoneId, { marker, popup });
+    }
+
+    for (const [zoneId, entry] of productiveWatersMarkersRef.current) {
+      if (!seen.has(zoneId)) {
+        entry.popup.remove();
+        entry.marker.remove();
+        productiveWatersMarkersRef.current.delete(zoneId);
+      }
+    }
+  }, [mapReady, productiveWaters]);
+
   // -- hazard exclusion polygons + cyclone track: two separate layers, deliberately
   // distinct styles — PLAN.md Phase 6 / CLAUDE.md: "cyclone track and cone overlaid" as
   // two distinct visual things, not one -----------------------------------------------
@@ -571,6 +774,15 @@ export function MapView({
           : ""
       }`;
 
+  // The tool's own `summary` already opens with "FORESHORE-derived, INDICATIVE
+  // productive-waters estimate ... never the official INCOIS Potential Fishing Zone
+  // advisory" on every path (success, no-zone-clears-threshold, and the abstention
+  // path) — rendered verbatim rather than composed here, same discipline as
+  // `pfzDerived.disclaimer` above (CLAUDE.md: never present a derivation as official).
+  const productiveWatersNote = !productiveWaters
+    ? "Loading productive-waters estimate…"
+    : productiveWaters.summary;
+
   const hazardNote = !hazards
     ? "Checking for active cyclone hazard…"
     : hazards.no_active_hazard
@@ -597,6 +809,13 @@ export function MapView({
             Derived PFZ (indicative)
           </div>
           <div className="map-view__legend-item">
+            <span
+              className="map-view__swatch map-view__swatch--productive"
+              style={{ background: PRODUCTIVE_WATERS_COLOR, borderColor: PRODUCTIVE_WATERS_COLOR }}
+            />
+            Productive waters (indicative)
+          </div>
+          <div className="map-view__legend-item">
             <span className="map-view__swatch map-view__swatch--fill" style={{ background: HAZARD_FILL_COLOR }} />
             Hazard exclusion
           </div>
@@ -614,6 +833,10 @@ export function MapView({
         <div className="map-view__note map-view__note--derived">
           <span className="map-view__note-dot" aria-hidden="true" />
           {derivedNote}
+        </div>
+        <div className="map-view__note map-view__note--productive">
+          <span className="map-view__note-dot" aria-hidden="true" />
+          {productiveWatersNote}
         </div>
         <div className="map-view__note">
           <span className="map-view__note-dot" aria-hidden="true" />

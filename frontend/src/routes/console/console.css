@@ -481,6 +481,16 @@
   border: 1.5px dashed;
 }
 
+/* Productive waters (tool 18): filled square with a SOLID border — deliberately unlike
+   both the plain filled dot (official PFZ, no `--dashed`/`--solid-fill`) and the dashed
+   hollow square above (derived PFZ), matching the map layer's own solid-border-plus-fill
+   treatment. */
+.fm-legend__swatch--solid-fill {
+  border-radius: 2px;
+  border: 1.5px solid;
+  opacity: 0.85;
+}
+
 .fm-legend__status {
   display: flex;
   flex-wrap: wrap;
@@ -533,6 +543,30 @@
   pointer-events: auto;
   cursor: pointer;
   z-index: 3;
+}
+
+/* ── Productive-Waters Rank Badges (tool 18) ────────────────────────────────
+   One small numbered DOM marker per zone centroid, built directly by FleetMap.tsx
+   (maplibregl.Marker) for the same reason vessels above are DOM markers and landing
+   centres are not: there are only up to five of these, and a rank number needs real text,
+   which a GL symbol layer only gets from a configured `glyphs` URL this map's style never
+   declares. Sits below the vessel z-index so a boat marker never hides under a zone badge. */
+.fm-zone-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--productive-waters);
+  color: var(--marine-navy-deep);
+  font-size: 11px;
+  font-weight: 700;
+  border: 2px solid var(--marine-navy-deep);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 2;
 }
 
 /* Dashed ring behind every vessel icon — a constant, non-decorative reminder that this

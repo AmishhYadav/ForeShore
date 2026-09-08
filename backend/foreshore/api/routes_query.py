@@ -29,6 +29,7 @@ from ..tools.geofence_tools import check_geofences
 from ..tools.hazards import get_hazard_alerts
 from ..tools.pfz import find_nearest_pfz
 from ..tools.pfz_derived import derive_pfz_zones
+from ..tools.productive_waters import find_productive_waters
 from ..tools.routing_tools import plan_route
 from ..tools.verdict_tools import evaluate_verdict
 from .serialize import tool_result_response
@@ -285,6 +286,35 @@ def get_pfz_official(lat: float, lon: float) -> dict[str, Any]:
 @router.get("/pfz/derived")
 def get_pfz_derived(bbox: str | None = None, when: str | None = None) -> dict[str, Any]:
     return tool_result_response(derive_pfz_zones(bbox=_parse_bbox(bbox), when=when))
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/productive-waters?bbox&when&lat&lon&limit — thin passthrough to tool 18,
+# find_productive_waters.
+#
+# Answers the PS bullet "Which regions show high chlorophyll concentration and
+# favourable sea surface temperature?" verbatim — see that tool's own module docstring
+# for why this is a distinct question from tool 8's SST-frontal-gradient PFZ derivation
+# even though both end up reading the same underlying grids. Same discipline as
+# /api/pfz/derived above: every zone this returns carries `is_derived: true` and is
+# never the official INCOIS advisory (CLAUDE.md). The tool itself never raises — a
+# missing chlorophyll or SST input degrades to `ok=True, partial=True` with a named
+# `missing` entry, so this passthrough needs no extra try/except to keep a source
+# outage from becoming a 500.
+# ------------------------------------------------------------------------------------
+
+
+@router.get("/productive-waters")
+def get_productive_waters(
+    bbox: str | None = None,
+    when: str | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    return tool_result_response(
+        find_productive_waters(bbox=_parse_bbox(bbox), when=when, lat=lat, lon=lon, limit=limit)
+    )
 
 
 # ------------------------------------------------------------------------------------

@@ -397,6 +397,38 @@ export interface PfzDerivedPayload {
   disclaimer: string;
 }
 
+/** GET /api/productive-waters — tool 18's payload (`find_productive_waters`). Answers the
+ * PS bullet "Which regions show high chlorophyll concentration and favourable sea surface
+ * temperature?" by ranking zones where both signals coincide, ordered by distance from a
+ * reference point. Exactly like `PfzDerivedPayload` above, this is always FORESHORE's own
+ * indicative derivation, never the official INCOIS Potential Fishing Zone advisory — see
+ * CLAUDE.md's "Do not present derived PFZ zones as the official INCOIS advisory", which
+ * binds this payload too even though it answers a different PS bullet than tool 8's.
+ * `summary` (sibling field on the envelope, not on this payload) already carries that
+ * disclaimer in words on every path — render it rather than composing a new one.
+ * Each `zones` Feature's `properties` carries `zone_id`, `zone_rank` (1 = closest),
+ * `is_derived`, `centroid_lat`, `centroid_lon`, `bearing_deg`, `distance_nm`, `area_nm2`,
+ * `mean_chlorophyll_mg_m3`, `mean_sst_degc`, `sst_front_coincides`. `method` is a string on
+ * the normal/no-zone paths and a small `{description, reason}` object when the tool could
+ * not compute at all (see `_missing_result` in the tool) — render either as text, never
+ * pick fields off it. `chlorophyll_source`/`sst_source` arrive already in human words —
+ * render them as-is, never decorated with a dataset id (CLAUDE.md rule 3). Chlorophyll
+ * composites run 2-3 days behind live conditions; the per-zone `valid_time` on the
+ * matching `zone_mean_chlorophyll`/`zone_mean_sea_surface_temperature` Observation (on the
+ * envelope's own `observations`, matched by `qualifiers.zone_id`) is that field's own date
+ * — show it, never the request time. An empty `zones` collection is a normal, valid
+ * reading of the data (nothing cleared both thresholds together), not an error. */
+export interface ProductiveWatersPayload {
+  zones: GeoJSON.FeatureCollection;
+  reference_point: [number, number] | null;
+  method: string | Record<string, unknown>;
+  chlorophyll_source: string | null;
+  sst_source: string | null;
+  sst_band_degc: [number, number] | null;
+  chlorophyll_percentile: number;
+  when_note?: string | null;
+}
+
 /** GET /api/hazards — tool 12's payload. `polygons` (cone/wind-radii exclusion areas)
  * and `cyclone_track` (the storm's own observed+forecast line) are deliberately two
  * separate GeoJSON collections — render as different map layers, not one. Each feature

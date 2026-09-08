@@ -685,6 +685,13 @@ def check_unsourced_numbers(
             # does not let an unsourced number through.
             a = abs(v)
             sourced.extend([a, round(a, 1), round(a, 2), round(a)])
+        # An Observation's own position is as sourced as its value. Prose that says
+        # "centred on (9.450, 79.300)" was being failed for the longitude, because the
+        # audit only ever looked at values and qualifiers — so a correct, fully sourced
+        # sentence got thrown away and the answer fell back to the template. Any tool that
+        # names a position hits this.
+        sourced.extend([obs.lat, round(obs.lat, 2), round(obs.lat, 3)])
+        sourced.extend([obs.lon, round(obs.lon, 2), round(obs.lon, 3)])
         for q in obs.qualifiers.values():
             if isinstance(q, (int, float)) and not isinstance(q, bool):
                 sourced.append(float(q))

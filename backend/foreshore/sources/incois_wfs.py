@@ -350,6 +350,14 @@ class IncoisWFS(Source):
             lon,
             valid_time=advisory_date or raw.acquired_at,
             provenance=prov,
+            # The bearing is spoken in the tool's summary ("lies 12.1 nm away at 210
+            # degrees") and lived only in `payload`, so the audit correctly reported it as
+            # an unsourced number — invariant 3, caught by the system's own check. It is a
+            # real measured quantity from the same computation as the distance, so it
+            # belongs on the Observation, not only on the render payload.
+            bearing_deg=round(bearing, 1),
+            closest_lat=best_point[0],
+            closest_lon=best_point[1],
         )
         payload = {
             "bearing_deg": round(bearing, 1),

@@ -42,6 +42,14 @@
   --pfz-official: #2dd4bf;
   --pfz-derived: #7c93ff;
   --hazard-track: #ff5da2;
+  /* Tool 18's productive-waters zones (chlorophyll + favourable SST) — a third, distinct
+     hue from both PFZ colours above so the three fishing-relevant layers never read as
+     the same thing at a glance: --pfz-official is teal (solid line, official), --pfz-
+     derived is blue-violet (fill + dashed border, indicative), this is chlorophyll-green
+     (fill + solid border + numbered rank badges, indicative). Never hardcode this literal
+     in a component — read the token, same convention MapView.tsx/FleetMap.tsx already
+     document for the pair above. */
+  --productive-waters: #84cc16;
 
   /* ── Fleet Map Coastline (local vector, network-independent) ───────────── */
   --land-fill: #16405c;

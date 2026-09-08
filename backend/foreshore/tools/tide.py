@@ -25,7 +25,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from ..config import RegionConfig, load_region
 from ..models import Observation, ToolResult, utcnow
+from ..verdict.ceiling import local_clock
 from .registry import latlon_schema, registry
 
 #: The two current sources this tool reads, and the order they are checked in. Kept as
@@ -78,19 +80,42 @@ def _fmt(value: Any, decimals: int) -> str:
 
 
 def _build_tide_summary(
-    current: Observation, next_high: dict[str, Any] | None, next_low: dict[str, Any] | None
+    current: Observation,
+    next_high: dict[str, Any] | None,
+    next_low: dict[str, Any] | None,
+    region: RegionConfig | None = None,
 ) -> str:
-    """One line built ONLY from values actually present in the fetched series."""
+    """One line built ONLY from values actually present in the fetched series.
+
+    Times are said in the region's own timezone, the way a person says them. This summary
+    is spliced verbatim into the answer, and "next high 0.54 m at
+    2026-09-07T07:00:00+00:00" is both unreadable and — for the fisherman reading it —
+    in the wrong timezone by five and a half hours. The ISO instants stay on the
+    Observations and in the payload, which is what the trace and the chart read.
+    """
+    region = region or load_region()
+
+    def _at(entry: dict[str, Any]) -> str:
+        raw = entry.get("time")
+        if isinstance(raw, datetime):
+            return local_clock(raw, region)
+        if isinstance(raw, str):
+            try:
+                return local_clock(datetime.fromisoformat(raw), region)
+            except ValueError:
+                return str(raw)
+        return "an unrecorded time"
+
     parts = [f"Sea level now {_fmt(current.value, 2)} {current.unit} MSL"]
     if next_high is not None:
         parts.append(
             f"next high {_fmt(next_high.get('value'), 2)} {next_high.get('unit', current.unit)} "
-            f"at {next_high.get('time')}"
+            f"at {_at(next_high)}"
         )
     if next_low is not None:
         parts.append(
             f"next low {_fmt(next_low.get('value'), 2)} {next_low.get('unit', current.unit)} "
-            f"at {next_low.get('time')}"
+            f"at {_at(next_low)}"
         )
     summary = "; ".join(parts) + "."
     summary += (

@@ -9,6 +9,7 @@ import type {
   HealthReport,
   PfzDerivedPayload,
   PfzOfficialPayload,
+  ProductiveWatersPayload,
   QueryOutcome,
   QueryRequest,
   RegionInfo,
@@ -325,6 +326,25 @@ export function getHazards(params?: {
   if (params?.when) q.set("when", params.when);
   const qs = q.toString();
   return request(`/api/hazards${qs ? `?${qs}` : ""}`);
+}
+
+// -- Map-layer passthrough (tool 18) ----------------------------------------------------
+
+export function getProductiveWaters(params?: {
+  bbox?: [number, number, number, number];
+  when?: string;
+  lat?: number;
+  lon?: number;
+  limit?: number;
+}): Promise<ToolResultEnvelope<ProductiveWatersPayload>> {
+  const q = new URLSearchParams();
+  if (params?.bbox) q.set("bbox", params.bbox.join(","));
+  if (params?.when) q.set("when", params.when);
+  if (params?.lat !== undefined) q.set("lat", String(params.lat));
+  if (params?.lon !== undefined) q.set("lon", String(params.lon));
+  if (params?.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return request(`/api/productive-waters${qs ? `?${qs}` : ""}`);
 }
 
 // -- Region swap ------------------------------------------------------------------------

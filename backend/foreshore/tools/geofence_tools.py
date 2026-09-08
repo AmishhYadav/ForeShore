@@ -499,9 +499,15 @@ def get_exclusion_zones(
     notes: list[str] = []
 
     if when:
+        # This note is spliced verbatim into the answer, so it says the thing in words.
+        # It used to print the raw parameter name and an ISO-8601 instant —
+        # "'when'='2026-09-07T01:39:59.900346+00:00' was requested but..." — which tells a
+        # fisherman nothing and tells a judge that an internal argument reached the copy.
+        # The machine-readable value stays in `payload`, where the trace inspector shows it.
         notes.append(
-            f"'when'={when!r} was requested but upstream sources only expose current "
-            "state; results reflect now, not that timestamp."
+            "These zones describe conditions now. The sources behind them publish only "
+            "their current state, so they cannot be rolled forward to the time you asked "
+            "about — check again closer to it."
         )
 
     # -- GDACS cyclone hazard polygons ---------------------------------------------
