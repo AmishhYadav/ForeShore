@@ -1001,44 +1001,33 @@ def _no_verdict_text(lang: str) -> str:
     }.get(lang, "FORESHORE could not assemble enough evidence to answer this safely.")
 
 
-def _synthesis_prompt(
-    question: str,
-    verdict: Verdict | None,
-    tool_results: Sequence[ToolResult],
-    language: str,
-    answer_kind: str = "ADVISORY",
-) -> str:
-    # Three labelled blocks, and the labels matter. This prompt used to interleave
-    # directives with the facts they were about ("...downgraded this from
-    # GO_WITH_CAUTION. Say so — that the system was made more cautious is part of the
-    # answer.") — and a mid-sized model copied those sentences straight into the answer,
-    # instructions and all. Separating what is TRUE from what to DO, and saying plainly
-    # that the brief is not content, is the fix; `_is_prompt_echo` is the net under it.
+def _verdict_lines(verdict: Verdict, language: str) -> list[str]:
+    """The advisory's facts, as bullet lines — split out so `_synthesis_prompt` can
+    place this block first (ADVISORY) or last (INFORMATIONAL) without duplicating it."""
     lines = [
-        "## QUESTION",
-        question,
-        "",
-        "## WHAT IS TRUE  (facts and numbers — the only ones you may state)",
+        f"- The advisory has been decided: \"{_plain_verdict(verdict.level, language)}\".",
+        f"- Why: {'; '.join(verdict.reasons) or '(none recorded)'}",
     ]
-    if verdict:
-        lines += [
-            f"- The advisory has been decided: \"{_plain_verdict(verdict.level, language)}\".",
-            f"- Why: {'; '.join(verdict.reasons) or '(none recorded)'}",
-        ]
-        if verdict.ceiling_notes:
-            lines.append("- Governing advisory: " + " ".join(verdict.ceiling_notes))
-        if verdict.downgraded_from:
-            lines.append(
-                "- The advisory ceiling made this more cautious than the vessel "
-                "thresholds alone would have been."
-            )
-        if verdict.handoff:
-            h = verdict.handoff
-            lines.append(
-                f"- The person to contact is {h.authority_name}"
-                + (f", {h.contact}" if (h.contact and h.contact_verified) else "")
-                + "."
-            )
+    if verdict.ceiling_notes:
+        lines.append("- Governing advisory: " + " ".join(verdict.ceiling_notes))
+    if verdict.downgraded_from:
+        lines.append(
+            "- The advisory ceiling made this more cautious than the vessel "
+            "thresholds alone would have been."
+        )
+    if verdict.handoff:
+        h = verdict.handoff
+        lines.append(
+            f"- The person to contact is {h.authority_name}"
+            + (f", {h.contact}" if (h.contact and h.contact_verified) else "")
+            + "."
+        )
+    return lines
+
+
+def _tool_result_lines(tool_results: Sequence[ToolResult]) -> list[str]:
+    """Every tool's summary plus its observations, as bullet lines."""
+    lines: list[str] = []
     for r in tool_results:
         if not r.observations and not r.summary:
             continue
@@ -1052,11 +1041,57 @@ def _synthesis_prompt(
                 + (", DERIVED" if p.is_derived else "")
                 + "]"
             )
+    return lines
+
+
+def _synthesis_prompt(
+    question: str,
+    verdict: Verdict | None,
+    tool_results: Sequence[ToolResult],
+    language: str,
+    answer_kind: str = "ADVISORY",
+) -> str:
+    # Three labelled blocks, and the labels matter. This prompt used to interleave
+    # directives with the facts they were about ("...downgraded this from
+    # GO_WITH_CAUTION. Say so — that the system was made more cautious is part of the
+    # answer.") — and a mid-sized model copied those sentences straight into the answer,
+    # instructions and all. Separating what is TRUE from what to DO, and saying plainly
+    # that the brief is not content, is the fix; `_is_prompt_echo` is the net under it.
+    #
+    # On an INFORMATIONAL question the verdict block moved to LAST, under its own
+    # sub-heading. It used to lead every prompt regardless of answer_kind, richly
+    # detailed (advisory, reason, ceiling note, handoff) while the facts that actually
+    # answer the question sat further down as a plain bullet list — and a fast/smaller
+    # model reliably read that as "the important thing" and answered a go/no-go question
+    # nobody asked, ignoring the WHAT TO DO instruction to answer the real one (observed
+    # directly: `get_productivity_history`'s chlorophyll/SST/Argo findings on a "why has
+    # productivity declined" question, discarded in favour of restating the sea-state
+    # verdict). Read order does not decide write order — the WHAT TO DO block below still
+    # controls where the verdict sentence lands in the final answer — but it decides what
+    # a smaller model treats as salient, and the question's own facts have to win that.
+    lines = ["## QUESTION", question, ""]
+    verdict_lines = _verdict_lines(verdict, language) if verdict else []
+    result_lines = _tool_result_lines(tool_results)
+
+    if answer_kind == "INFORMATIONAL" and result_lines:
+        lines += ["## FACTS THAT ANSWER THE QUESTION", *result_lines]
+        if verdict_lines:
+            lines += [
+                "",
+                "## SAFETY CONTEXT  (state briefly; this is NOT the answer to the question above)",
+                *verdict_lines,
+            ]
+    else:
+        lines.append("## WHAT IS TRUE  (facts and numbers — the only ones you may state)")
+        lines += verdict_lines + result_lines
 
     lines += ["", "## WHAT TO DO"]
     if answer_kind == "INFORMATIONAL":
         lines += [
-            "Answer the question, from the facts above.",
+            "This is NOT a go/no-go question. Do not open with the advisory and do not "
+            "let it become the main subject of your answer.",
+            "Answer the question using the FACTS THAT ANSWER THE QUESTION above — name "
+            "the actual numbers and trends there, in your own first sentences.",
             "The advisory is context for this position and time, not the answer — give "
             "it one short sentence, and never let it read as a refusal to answer.",
         ]
@@ -1090,10 +1125,12 @@ def _synthesis_prompt(
 #: heading or says "reply with the answer itself".
 _PROMPT_ECHO_MARKERS: tuple[str, ...] = (
     "## question", "## what is true", "## what to do",
+    "## facts that answer the question", "## safety context",
     "reply with the answer itself", "this brief is instructions",
     "you must state", "say so — that the system", "say so - that the system",
     "the only ones you may state", "never as a bare name",
     "is part of the answer", "write in english",
+    "is not a go/no-go question", "is not a go-no-go question",
 )
 
 

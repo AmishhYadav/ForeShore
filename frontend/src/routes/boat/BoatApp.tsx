@@ -50,6 +50,8 @@ import { AlertBanner } from "./AlertBanner";
 import { RouteSummary } from "./RouteSummary";
 import { useOwnPosition } from "./useOwnPosition";
 import { useProximityAlerts } from "./useProximityAlerts";
+import { usePushAlerts } from "./usePushAlerts";
+import { VesselIdentityPicker } from "./VesselIdentityPicker";
 import "./boat.css";
 
 // Mirrors backend/foreshore/agents/synthesis.py's LABELS["en"] — used only before the
@@ -80,6 +82,9 @@ export default function BoatApp() {
 
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
+  // PS bullet 3: sent back on every follow-up so a refinement like "what about tomorrow
+  // morning?" resolves against this conversation's last turn.
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
 
@@ -165,6 +170,24 @@ export default function BoatApp() {
     language: outcome?.language ?? "en",
   });
 
+  // A console's live broadcast (or the fleet loop's own weather/hazard alerts) over the
+  // same WS transport the console reads — see usePushAlerts.ts's doc comment for why
+  // this screen previously never received either. `vesselId` (below) lets a demo device
+  // identify as one tracked vessel via VesselIdentityPicker; unset subscribes to every
+  // vessel so a fleet-wide broadcast always reaches it.
+  const [vesselId, setVesselIdState] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("vessel_id"),
+  );
+  const pushAlerts = usePushAlerts(vesselId);
+
+  function setVesselId(next: string | null) {
+    setVesselIdState(next);
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("vessel_id", next);
+    else url.searchParams.delete("vessel_id");
+    window.history.replaceState({}, "", url);
+  }
+
   // Manual playback only. Toggling while speaking stops it — on a boat the ability to
   // shut it up matters as much as the ability to start it.
   function handleSpeak(text: string, language: string) {
@@ -209,8 +232,10 @@ export default function BoatApp() {
         heading_deg: position.headingDeg ?? undefined,
         speed_kn: position.speedKn ?? undefined,
         surface: "boat",
+        session_id: sessionId,
       });
       setOutcome(result);
+      if (result.session_id) setSessionId(result.session_id);
       cacheDecision(result).catch(() => {});
       if (result.route) cacheRoute(result.route).catch(() => {});
       // No automatic playback. The answer is spoken only when the user presses Speak.
@@ -269,6 +294,7 @@ export default function BoatApp() {
           <span className="boat-app__brand-mark" aria-hidden="true" />
           FORESHORE
         </Link>
+        <VesselIdentityPicker value={vesselId} onChange={setVesselId} />
         <OfflineToggle offline={offline} browserOffline={browserOffline} onChange={handleOfflineToggle} />
       </header>
 
@@ -327,7 +353,11 @@ export default function BoatApp() {
 
         {/* ── Map Tab ──────────────────────────────────────── */}
         <div className={`boat-tab-panel${activeTab === "map" ? " boat-tab-panel--active" : ""}`}>
-          <AlertBanner alerts={proximity.alerts} offline={offline} hasData={proximity.hasData} />
+          <AlertBanner
+            alerts={[...pushAlerts, ...proximity.alerts]}
+            offline={offline}
+            hasData={proximity.hasData || pushAlerts.length > 0}
+          />
 
           <MapView
             region={region}

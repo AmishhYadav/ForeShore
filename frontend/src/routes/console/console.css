@@ -299,6 +299,208 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+/* ── Data Pane ─────────────────────────────────────────────────────────────── */
+
+.console-data-pane {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.data-tab {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.data-tab__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.data-tab__title {
+  font-family: var(--font-headline);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-50);
+  margin: 0 0 4px;
+}
+
+.data-tab__subtitle {
+  font-size: 12px;
+  color: var(--marine-on-surface-variant);
+  max-width: 520px;
+  margin: 0;
+}
+
+.data-tab__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.data-tab__port-select {
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-50);
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 7px 10px;
+}
+
+.data-tab__generated {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+  margin: 4px 0 20px;
+}
+
+.data-tab__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.data-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.data-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.data-card__title {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-50);
+  margin: 0;
+}
+
+.data-card__status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.data-card__status--go {
+  background: var(--verdict-go-bg);
+  color: var(--verdict-go);
+}
+
+.data-card__status--caution {
+  background: var(--verdict-caution-bg);
+  color: var(--verdict-caution);
+}
+
+.data-card__status--stop {
+  background: var(--verdict-stop-bg);
+  color: var(--verdict-stop);
+}
+
+.data-card__summary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--marine-on-surface-variant);
+  margin: 0;
+}
+
+.data-card__obs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.data-obs-row {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.data-obs-row:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.data-obs-row__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.data-obs-row__variable {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--marine-on-surface-variant);
+}
+
+.data-obs-row__value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-50);
+  text-align: right;
+}
+
+.data-obs-row__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.data-obs-row__source {
+  font-size: 10px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.85;
+}
+
+.data-obs-row__authority {
+  opacity: 0.7;
+}
+
+.data-obs-row__freshness {
+  color: var(--marine-navy);
+  flex-shrink: 0;
+}
+
+.data-obs-row__derived {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 9px;
+}
+
+.data-card__missing {
+  font-size: 11px;
+  color: var(--verdict-caution);
+  margin: 0;
+}
+
+.data-card__error {
+  font-size: 11px;
+  color: var(--verdict-stop);
+  margin: 0;
+}
+
 /* ── Fleet Map Overrides ───────────────────────────────────────────────────── */
 
 .fm-wrap {
@@ -655,11 +857,57 @@
   opacity: 1;
 }
 
+/* Geofence-proximity ring — independent of the verdict-coloured hull: a vessel can be
+   perfectly GO on weather and still be closing on the IMBL, and that must be visible on
+   the map itself, not only as a row in the alert queue. Yellow = approaching (WARN,
+   the geofence's own warn_nm band); red, pulsing = inside the line or past its
+   critical_nm band (BREACH/CRITICAL — CLAUDE.md's geofence severity table). Painted as
+   a ::before so it sits behind the sim-ring/hull/label without touching FleetMap.tsx's
+   marker innerHTML. */
+.fm-vessel-marker--alert-warn::before,
+.fm-vessel-marker--alert-critical::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.fm-vessel-marker--alert-warn::before {
+  border: 2.5px solid var(--verdict-caution);
+  box-shadow: 0 0 10px rgba(224, 168, 21, 0.55);
+}
+
+.fm-vessel-marker--alert-critical::before {
+  border: 2.5px solid var(--verdict-stop);
+  box-shadow: 0 0 12px rgba(217, 72, 63, 0.65);
+  animation: fm-alert-ring-pulse 1s ease-in-out infinite;
+}
+
+@keyframes fm-alert-ring-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.15);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fm-vessel-marker--selected::after {
     animation: none;
   }
   .fm-vessel-sim-ring {
+    animation: none;
+  }
+  .fm-vessel-marker--alert-critical::before {
     animation: none;
   }
 }
@@ -1025,6 +1273,145 @@
 .alert-queue__operator input:focus {
   border-color: var(--marine-aqua);
   box-shadow: 0 0 0 3px rgba(27, 163, 163, 0.15);
+}
+
+.alert-broadcast {
+  margin: 12px 16px 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+}
+
+.alert-broadcast__toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-50);
+}
+
+.alert-broadcast__title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.alert-broadcast__hint {
+  font-size: 10px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.alert-broadcast__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.alert-broadcast__row {
+  display: flex;
+  gap: 10px;
+}
+
+.alert-broadcast__row label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.alert-broadcast__form select,
+.alert-broadcast__form input[type="text"],
+.alert-broadcast__form textarea {
+  padding: 7px 10px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ink-50);
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  outline: none;
+  resize: vertical;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.alert-broadcast__form select:focus,
+.alert-broadcast__form input[type="text"]:focus,
+.alert-broadcast__form textarea:focus {
+  border-color: var(--marine-aqua);
+  box-shadow: 0 0 0 3px rgba(27, 163, 163, 0.15);
+}
+
+.alert-broadcast__row--actions {
+  align-items: center;
+}
+
+.alert-broadcast__result {
+  font-size: 11px;
+  color: var(--marine-on-surface-variant);
+}
+
+.alert-broadcast__result--error {
+  color: var(--marine-danger, #e05a5a);
+}
+
+.ts-chart {
+  margin: 10px 0 0;
+  padding: 10px 12px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.ts-chart__caption {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-50);
+  margin-bottom: 4px;
+}
+
+.ts-chart__unit {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.ts-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ts-chart__grid {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.ts-chart__axis-label {
+  font-size: 9px;
+  fill: var(--marine-on-surface-variant);
+  opacity: 0.75;
+}
+
+.ts-chart__line {
+  fill: none;
+  stroke-width: 1.75;
+}
+
+.ts-chart__point {
+  opacity: 0.85;
 }
 
 .alert-queue__explainer {
@@ -2481,14 +2868,62 @@
   color: var(--marine-aqua-bright);
 }
 
-.architecture-panel__grid {
+/* Vertical pipeline: planner -> concurrent specialists -> risk/ceiling -> synthesis —
+   see ArchitecturePanel.tsx's STAGES. Vertical rather than horizontal because this panel
+   lives in a ~580px-wide system-card column; five stages side by side would not fit
+   anywhere legible. */
+.architecture-flow {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: stretch;
+}
+
+.architecture-flow__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.architecture-flow__arrow {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.5;
+  padding: 4px 0;
+}
+
+.architecture-stage {
+  width: 100%;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-lg);
+}
+
+.architecture-stage__title {
+  font-family: var(--font-headline);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--marine-aqua-bright);
+  margin-bottom: 4px;
+}
+
+.architecture-stage__blurb {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--marine-on-surface-variant);
+  margin: 0 0 12px;
+}
+
+.architecture-stage__members {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .specialist-card {
-  padding: 14px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-md);
@@ -2500,31 +2935,56 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+.specialist-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
 .specialist-card__name {
   font-family: var(--font-headline);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink-50);
-  margin-bottom: 4px;
+}
+
+.specialist-card__chevron {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--marine-on-surface-variant);
+  flex-shrink: 0;
 }
 
 .specialist-card__role {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--marine-on-surface-variant);
   line-height: 1.4;
-  margin-bottom: 4px;
+  margin: 4px 0 0;
 }
 
 .specialist-card__ps {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--marine-aqua-bright);
-  margin-bottom: 8px;
+  margin: 8px 0 6px;
 }
 
 .specialist-card__tools {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+}
+
+.specialist-card__no-tools {
+  font-size: 10px;
+  color: var(--marine-on-surface-variant);
+  opacity: 0.75;
+  font-style: italic;
 }
 
 /* ── Empty Note ────────────────────────────────────────────────────────────── */

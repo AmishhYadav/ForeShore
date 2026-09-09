@@ -172,6 +172,45 @@ export function formatClock(iso: string | null | undefined): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/** Plain-English label for each of the 18 registered tools (tools/registry.py) — the
+ *  trace inspector otherwise shows the raw snake_case function name as the card's only
+ *  heading, which reads as code to an operator who is not a developer. The raw name is
+ *  never hidden, just demoted to a `title` attribute by the caller. */
+const TOOL_LABELS: Record<string, string> = {
+  check_geofences: "Boundary/zone check",
+  derive_pfz_zones: "Derived fishing zones",
+  evaluate_verdict: "Go / no-go verdict",
+  find_nearest_pfz: "Nearest official fishing zone",
+  find_productive_waters: "Productive-waters scan",
+  find_vessels_near_boundary: "Vessels near boundary",
+  get_currents: "Ocean currents",
+  get_decision_envelope: "Safe-window forecast",
+  get_exclusion_zones: "Hazard exclusion zones",
+  get_governing_advisory: "Governing IMD bulletin",
+  get_hazard_alerts: "Cyclone/hazard alerts",
+  get_lightning_nowcast: "Lightning nowcast",
+  get_productivity_history: "Productivity-decline history",
+  get_sea_state: "Sea state / wave height",
+  get_tide: "Tide",
+  get_weather: "Wind & weather",
+  list_available_data: "Data-coverage check",
+  nearest_harbour: "Nearest harbour",
+  plan_route: "Route planning (A*)",
+};
+
+export function toolLabel(tool: string | null | undefined): string {
+  if (!tool) return "—";
+  return TOOL_LABELS[tool] ?? tool;
+}
+
+/** "OceanAnalytics" -> "Ocean Analytics" — splits on the internal capital letters every
+ *  specialist name is written with (agents/specialists.py), never a lookup table to keep
+ *  in step with. */
+export function agentLabel(agent: string | null | undefined): string {
+  if (!agent) return "—";
+  return agent.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 export function shortId(id: string | null | undefined, len = 8): string {
   if (!id) return "—";
   return id.length > len ? `${id.slice(0, len)}…` : id;

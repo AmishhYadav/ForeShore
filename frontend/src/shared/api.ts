@@ -5,6 +5,8 @@
  */
 import type {
   Alert,
+  AlertLevel,
+  ConditionsPayload,
   HazardsPayload,
   HealthReport,
   PfzDerivedPayload,
@@ -250,6 +252,23 @@ export function getAlerts(params?: {
   return request(`/api/alerts${qs ? `?${qs}` : ""}`);
 }
 
+/**
+ * POST /api/alerts/broadcast — a console-authored alert, pushed live over the exact same
+ * WS /ws/alerts transport the automated geofence/weather/hazard alerts use. `vessel_id`
+ * omitted broadcasts to every tracked vessel. Every client already subscribed to that
+ * socket (boat UI, another console tab, a phone running either) renders it the instant
+ * this resolves — no polling.
+ */
+export function broadcastAlert(body: {
+  vessel_id?: string | null;
+  level?: AlertLevel;
+  title: string;
+  body: string;
+  by?: string;
+}): Promise<{ broadcast_id: string; sent: number; alerts: Alert[] }> {
+  return request("/api/alerts/broadcast", { method: "POST", body: JSON.stringify(body) });
+}
+
 export function ackAlert(alertId: string, by = "unknown"): Promise<Alert> {
   return request(`/api/alerts/${alertId}/ack`, { method: "POST", body: JSON.stringify({ by }) });
 }
@@ -297,6 +316,14 @@ export function getGeofencesGeoJson(classes?: string[], regionId?: string): Prom
   if (regionId) q.set("region_id", regionId);
   const qs = q.toString();
   return request(`/api/geofences.geojson${qs ? `?${qs}` : ""}`);
+}
+
+// -- Raw conditions dashboard (console Data tab) ----------------------------------------
+
+export function getConditions(lat: number, lon: number, when?: string): Promise<ConditionsPayload> {
+  const q = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+  if (when) q.set("when", when);
+  return request(`/api/conditions?${q.toString()}`);
 }
 
 // -- Map-layer passthroughs (tools 7, 8, 12) -------------------------------------------

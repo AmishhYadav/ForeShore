@@ -23,6 +23,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import * as turf from "@turf/turf";
 import { getHazards, getLayerGeoJson, getPfzDerived, getPfzOfficial, getProductiveWaters } from "@shared/api";
 import type {
+  Alert,
   HazardsPayload,
   Observation,
   PfzDerivedPayload,
@@ -52,6 +53,35 @@ interface FleetMapProps {
    *  and the map eases to it when the selection arrives from the alert queue. */
   selectedVesselId?: string | null;
   onSelectVessel?: (vesselId: string) => void;
+  /** Active alerts (AlertQueue's own list — already filtered to unacknowledged/open).
+   *  Drives the per-vessel geofence-proximity ring below, independent of the hull's own
+   *  verdict colour — see the "alert ring" effect for why the two must stay separate. */
+  alerts?: Alert[];
+}
+
+//: WARN -> yellow ring, CRITICAL/BREACH -> red pulsing ring — mirrors
+//  geofence/classes.py's ALERT_RANK ordering; INFO carries no ring of its own (it never
+//  fires from the geofence path today, and a ring on every vessel would stop meaning
+//  anything).
+const ALERT_RING_RANK: Record<string, number> = { WARN: 1, CRITICAL: 2, BREACH: 2 };
+
+/** The worst active alert level per vessel, geofence-only — the ring on the map exists
+ *  specifically to make "this boat is closing on a boundary" visible without opening the
+ *  alert queue, and folding in weather/hazard alerts too would make the ring fire for
+ *  reasons the ring's own colour language (a boundary distance) can't explain. */
+function worstGeofenceAlertByVessel(alerts: Alert[]): Map<string, "WARN" | "CRITICAL"> {
+  const out = new Map<string, "WARN" | "CRITICAL">();
+  for (const a of alerts) {
+    if (a.kind !== "geofence" || a.acknowledged_at) continue;
+    const rank = ALERT_RING_RANK[a.level] ?? 0;
+    if (rank === 0) continue;
+    const ringLevel: "WARN" | "CRITICAL" = rank >= 2 ? "CRITICAL" : "WARN";
+    const existing = out.get(a.vessel_id);
+    if (!existing || ALERT_RING_RANK[ringLevel] > ALERT_RING_RANK[existing]) {
+      out.set(a.vessel_id, ringLevel);
+    }
+  }
+  return out;
 }
 
 interface Basemap {
@@ -312,6 +342,7 @@ export default function FleetMap({
   zoom,
   selectedVesselId = null,
   onSelectVessel,
+  alerts = [],
 }: FleetMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -1097,6 +1128,22 @@ export default function FleetMap({
     }
   }, [selectedVesselId, vessels, ready]);
 
+  // -- geofence-proximity alert ring ----------------------------------------------------
+  // A vessel can be a clean GO on weather and still be closing on the IMBL — the hull
+  // colour (verdictHex, above) has no way to show that, so this is a second, independent
+  // signal: a coloured ring around the hull, driven purely off active geofence alerts.
+  // Own effect for the same reason selection is its own effect above — a new alert must
+  // never touch marker geometry, and an alerts-only update must never wait on a vessel
+  // position tick.
+  useEffect(() => {
+    const byVessel = worstGeofenceAlertByVessel(alerts);
+    for (const [id, entry] of markersRef.current) {
+      const level = byVessel.get(id);
+      entry.el.classList.toggle("fm-vessel-marker--alert-warn", level === "WARN");
+      entry.el.classList.toggle("fm-vessel-marker--alert-critical", level === "CRITICAL");
+    }
+  }, [alerts, vessels, ready]);
+
   // -- ease to the selected vessel -----------------------------------------------------
   // Only when the selection actually changes: a selected vessel keeps moving on every
   // push tick, and chasing it would take control of the map away from the operator.
@@ -1184,6 +1231,21 @@ export default function FleetMap({
                 <LegendSwatch color="var(--verdict-caution)" label="Caution" />
                 <LegendSwatch color="var(--verdict-stop)" label="Do not advise" />
                 <LegendSwatch color="var(--ink-500)" label="No verdict" />
+              </div>
+              <div className="fm-legend__group">
+                <div className="fm-legend__heading">Boundary proximity</div>
+                <LegendSwatch
+                  color="var(--verdict-caution)"
+                  label="Approaching (ring)"
+                  dashed
+                  title="Within the geofence's warn_nm band — closing on the line, not across it yet."
+                />
+                <LegendSwatch
+                  color="var(--verdict-stop)"
+                  label="Inside / critical (ring)"
+                  dashed
+                  title="Across the line, or inside its critical_nm band — CLAUDE.md's IMBL/MPA distance table."
+                />
               </div>
               <div className="fm-legend__group">
                 <div className="fm-legend__heading">Boundary</div>

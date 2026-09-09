@@ -31,7 +31,6 @@ import re
 from datetime import timedelta
 
 import pytest
-
 from foreshore.geofence.classes import GEOFENCE_CLASSES, format_copy, title_for
 from foreshore.geofence.engine import DynamicFence, GeofenceEngine
 from foreshore.models import Alert, Observation, Provenance, ToolResult, VesselState, utcnow

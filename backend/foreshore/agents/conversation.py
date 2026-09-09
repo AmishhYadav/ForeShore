@@ -34,6 +34,7 @@ from ..config import (
 from ..models import Handoff, Observation, Provenance, utcnow
 from .language import normalise
 from .planner import INTENT_CUES, _cue_hits
+from .runtime import ScriptedClient, make_client
 
 #: Which door an utterance came through.
 #:
@@ -649,35 +650,77 @@ def concept_reply(
 
 
 # --------------------------------------------------------------------------------------
-# SMALLTALK / OUT_OF_SCOPE — fixed framing, no lookups, no model.
+# SMALLTALK / OUT_OF_SCOPE — a real reply when a model is reachable, a fixed one when it
+# is not. Both kinds are, by definition, not a marine question — nothing here ever
+# touches a verdict, a geofence or a sourced number, so routing them through the model
+# carries none of invariants 1-4's risk. The model is told explicitly never to invent a
+# live reading; the marine pipeline is the only path that is allowed to do that.
 # --------------------------------------------------------------------------------------
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are FORESHORE, a marine-safety assistant for small-boat fishermen on the "
+    "Palk Bay / Gulf of Mannar coast and the shore-side console that watches them. "
+    "The user's message is small talk or a general question unrelated to sea "
+    "conditions — answer it naturally and briefly (1-3 sentences), like any helpful "
+    "assistant: greetings, thanks, general knowledge, a joke, casual chat are all "
+    "fine. Never state or imply a live sea-state, weather, verdict or any other "
+    "marine reading yourself — you have no access to current data here. If it fits "
+    "naturally, you may mention FORESHORE can also give a live go/no-go safety "
+    "reading for this coast, but do not force that into every reply."
+)
+
+
+def _model_chat_reply(text: str, *, fallback: str) -> str:
+    """A short, model-written conversational reply, or ``fallback`` when no model is
+    reachable or the call fails. Same discipline as the rest of the pipeline
+    (`CLAUDE.md`: "every query goes through the model; the deterministic path is the
+    net") applied to the one door that used to be canned text no matter what."""
+    try:
+        client = make_client()
+    except Exception:  # noqa: BLE001 — client construction must never break a reply
+        return fallback
+    if not client.available or isinstance(client, ScriptedClient):
+        return fallback
+    try:
+        turn = client.turn(
+            _CHAT_SYSTEM_PROMPT,
+            [{"role": "user", "content": text}],
+            [],
+            max_tokens=200,
+            temperature=0.4,
+        )
+        return turn.text.strip() or fallback
+    except Exception:  # noqa: BLE001 — a flaky provider degrades to the canned line
+        return fallback
 
 
 def smalltalk_reply(
-    language: str = "en", *, region: RegionConfig | None = None
+    language: str = "en", *, region: RegionConfig | None = None, text: str = ""
 ) -> ConversationReply:
     region = region or load_region()
     _surface_language(language, region)
-    text = (
+    fallback = (
         "Hello — FORESHORE here. It checks sea state and weather against the governing "
         "coastal bulletin, tracks fishing zones and hazards, and watches maritime "
         "boundaries near you. Ask whenever you need a reading, or ask what it can do."
     )
-    return ConversationReply(text=text)
+    reply_text = _model_chat_reply(text, fallback=fallback) if text else fallback
+    return ConversationReply(text=reply_text)
 
 
 def out_of_scope_reply(
-    language: str = "en", *, region: RegionConfig | None = None
+    language: str = "en", *, region: RegionConfig | None = None, text: str = ""
 ) -> ConversationReply:
     region = region or load_region()
     _surface_language(language, region)
-    text = (
+    fallback = (
         "FORESHORE does not answer that — it covers marine safety and fishing "
         "conditions on this coast only: sea state, weather, fishing zones, hazards, "
         "boundaries, tides, routes and the vessel go/no-go verdict. Ask about any of "
         "those for your position, or ask what it can do."
     )
-    return ConversationReply(text=text)
+    reply_text = _model_chat_reply(text, fallback=fallback) if text else fallback
+    return ConversationReply(text=reply_text)
 
 
 __all__ += [

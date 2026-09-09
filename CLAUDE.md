@@ -1,29 +1,29 @@
 # CLAUDE.md — FORESHORE
 
-Operational context for Claude Code. Read this before touching anything.
+Operational contract for Claude Code. Read before touching anything.
 
-- Background, rationale, competitive position: `PROJECT_CONTEXT.md`
-- Phased implementation plan with contracts, endpoints and demo script: `PLAN.md`
-- Phases 10–13 upgrade plan — PS gap closure and the NavIC downlink: `PLAN_V2.md`
+| Doc | What is in it |
+|---|---|
+| `docs/PS_REQUIREMENTS.md` | The 11 PS capability bullets, 8 sample queries, **live compliance status**. The acceptance checklist. |
+| `docs/CONTEXT.md` | Background, competitive position, judge questions, what is / is not built |
+| `docs/API.md` | HTTP + WebSocket contract |
+| `docs/DECISIONS.md` | D1–D11 — engineering findings made during the build, with evidence |
+| `docs/DEMO_SCRIPT.md` | Pre-flight, the 7-minute run, failure drills |
+| `docs/DECK_CONTENT.md` | The 6-slide PDF content (30 Sept artifact) |
+| `docs/BACKLOG.md` | Deferred work + field-research citations. Not a work plan. |
 
-**Last verified against live sources: 2026-09-06.** Every endpoint below was probed directly,
-not taken from documentation. Re-run `scripts/healthcheck.py` each morning — operational
-endpoints move.
+`PLAN.md` (phases 0–9) and `PLAN_V2.md` (phases 10–13) were retired on 2026-09-09 —
+0–9 are built, 10–13 were not reachable in the time left. Both remain in git history, and
+code comments citing "PLAN.md Phase N" are historical provenance, not a live pointer.
+Anything still wanted from them is in `docs/BACKLOG.md`.
 
-> **Reachable is not usable.** The 2026-09-06 re-probe found two sources answering `200`
-> with content that could not support the claim being made from it, while the healthcheck
-> said `8/8 OK` throughout:
->
-> * `osf/chl` is a **Pacific** grid that has never covered India — a permanent miss.
-> * `PFZ_Automation:pfzlines` served **`Year=2021, Julian_day=248`** at 10:40 UTC and
->   **`Year=2026, Julian_day=249`** (that same day) at 18:10 UTC. It is *not* frozen — it
->   is a layer whose currency swings through the day, and which falls back to
->   five-year-old content in the window before the day's advisory is published. Reading it
->   without an age check means the answer silently alternates between today's advisory and
->   a 2021 one, with identical wording.
->
-> Both are handled below, and the healthcheck now checks currency and coverage, not just
-> reachability. When a source looks fine and the answer looks wrong, check what the layer
+**Last verified against live sources: 2026-09-06.** Every endpoint below was probed
+directly, not taken from documentation. Re-run `scripts/healthcheck.py` each morning —
+operational endpoints move.
+
+> **Reachable is not usable.** Two sources answered `200` with content that could not
+> support the claim made from it, while the healthcheck said `8/8 OK` throughout. Both are
+> handled below. When a source looks fine and the answer looks wrong, check what the layer
 > actually *contains* before anything else — and check it more than once.
 
 ---
@@ -31,20 +31,17 @@ endpoints move.
 ## What this is
 
 **FORESHORE** — an agentic marine intelligence platform for small-boat fishermen on the
-Palk Bay / Gulf of Mannar coast, plus a shore-side control console for fisheries and
-Coast Guard operators.
+Palk Bay / Gulf of Mannar coast, plus a shore-side control console for fisheries and Coast
+Guard operators.
 
-Built for **Smart India Hackathon PS SIH26176 ("ORCA")**, submitted by ISRO / Department
-of Space, filed under **Disaster Management**.
-
-The disaster-management framing is not decoration. Safety, alerting, and hazard avoidance
-outrank conversational polish in every design tradeoff. When in doubt, favour the safety path.
-
-### Deadlines
+Built for **Smart India Hackathon PS SIH26176 ("ORCA")**, submitted by ISRO / Department of
+Space, filed under **Disaster Management**. That framing is not decoration: safety,
+alerting and hazard avoidance outrank conversational polish in every design tradeoff. When
+in doubt, favour the safety path.
 
 | Date | Deliverable |
 |---|---|
-| ~8 Sept 2026 | Internal college round — **live demo + PPT** |
+| ~9 Sept 2026 | Internal college round — **live demo + PPT** |
 | 30 Sept 2026 | SIH portal — **6-slide PDF only**, no demo, reviewed by the PS owner |
 | Oct / Nov 2026 | Screening, then finale shortlist |
 | Dec 2026 | Grand Finale, 36 hours |
@@ -58,40 +55,29 @@ manufacture the screenshots and numbers that PDF needs.
 
 **Opus decides. Sonnet writes.**
 
-### Opus (main thread) owns
-- Architecture and design decisions; anything with a trade-off
-- **Contract definition** — `models.py`, tool signatures, config schemas, API shapes.
-  Everything downstream depends on these, so they are written once, carefully, by the model
-  holding full context
-- **Safety-critical logic** — `verdict/douglas.py`, `verdict/ceiling.py`, the abstention path,
-  geofence classing. These encode the invariants the submission rests on; not delegated
-- Reviewing every subagent diff before it counts as done
-- Phase sequencing, scope cuts, demo script, deck
+Opus (main thread) owns: architecture and anything with a trade-off; **contract
+definition** (`models.py`, tool signatures, config schemas, API shapes); **safety-critical
+logic** (`verdict/douglas.py`, `verdict/ceiling.py`, the abstention path, geofence
+classing); reviewing every subagent diff; phase sequencing, scope cuts, demo script, deck.
 
-### Sonnet subagents own
-Everything else — implementation against a contract Opus has already fixed. Natural units:
-one source adapter, one tool module, one UI route or component, `astar.py`, `costfield.py`,
-the vessel simulator, the healthcheck script, tests for an already-specified module.
+Sonnet subagents own everything else — implementation against a contract Opus has already
+fixed. Natural units: one source adapter, one tool module, one UI route or component, tests
+for an already-specified module.
 
 ```
 Agent(subagent_type: "general-purpose", model: "sonnet", prompt: <brief>)
 ```
 For surgical 1–2 file edits, `caveman:cavecrew-builder` is cheaper.
 
-Every subagent brief must carry, verbatim:
-1. exact file path(s) to create or modify
-2. the contract — dataclasses, function signatures, return types
-3. the acceptance test it must satisfy
-4. the standing constraints listed under "Invariants" below
+Every subagent brief must carry, verbatim: (1) exact file paths to create or modify,
+(2) the contract — dataclasses, signatures, return types, (3) the acceptance test it must
+satisfy, (4) the standing invariants below.
 
-**Batch independent subagents in parallel.** Separate source adapters, separate tools and
-separate UI components have no interdependency — dispatch them in one message, not serially.
+**Batch independent subagents in parallel.** Separate adapters, tools and UI components
+have no interdependency — dispatch in one message, not serially.
 
-### Opus writes code only when
-- defining the core contracts everything else builds against
-- the logic is safety-critical
-- a subagent has failed the acceptance test twice
-- the change is small enough that briefing costs more than doing it
+Opus writes code only when: defining core contracts; the logic is safety-critical; a
+subagent has failed the acceptance test twice; or briefing costs more than doing it.
 
 ---
 
@@ -99,55 +85,52 @@ separate UI components have no interdependency — dispatch them in one message,
 
 Enforced in code, not left to model judgment. Do not weaken them to make a demo work.
 
-1. **Advisory ceiling.** FORESHORE never issues a verdict more permissive than the governing
-   IMD Coastal Bulletin for the area. It may be *more* cautious. Implement as a deterministic
-   post-check on the final verdict object, after the LLM has produced it. If the check trips,
-   the verdict is downgraded and the downgrade is logged and shown.
+1. **Advisory ceiling.** Never issue a verdict more permissive than the governing IMD
+   Coastal Bulletin for the area. May be *more* cautious. A deterministic post-check on the
+   final verdict object, after the LLM produced it. If it trips, the verdict is downgraded
+   and the downgrade is logged and shown.
 
-2. **Three verdicts only.** `GO` / `GO_WITH_CAUTION` / `DO_NOT_ADVISE`. `DO_NOT_ADVISE` is a
-   designed outcome for missing, stale, or contradictory inputs — not an error state. It must
-   hand off to a named human authority (nearest landing centre from `PFZ_LandingCentres`, plus
-   Coast Guard 1554), never guess.
+2. **Three verdicts only.** `GO` / `GO_WITH_CAUTION` / `DO_NOT_ADVISE`. `DO_NOT_ADVISE` is
+   a designed outcome for missing, stale or contradictory inputs — not an error state. It
+   must hand off to a named human authority (nearest landing centre from
+   `PFZ_LandingCentres`, plus Coast Guard 1554), never guess.
 
 3. **No unsourced numbers.** Every quantitative claim traces to a retrieved record with a
-   source, an acquisition timestamp, and a spatial resolution. If a value has no provenance
-   record, it does not appear in the answer. The LLM never supplies values from its own
-   knowledge. A unit test asserts this.
+   source, an acquisition timestamp and a spatial resolution. No provenance record → it
+   does not appear in the answer. The LLM never supplies values from its own knowledge. A
+   unit test asserts this.
 
-4. **Staleness is surfaced, never hidden.** Every answer carries an evidence panel. Nothing is
-   labelled "current" that isn't. The IMD bulletin's own validity is **12 hours** — past that
-   it cannot authorise anything.
+4. **Staleness is surfaced, never hidden.** Every answer carries an evidence panel. Nothing
+   is labelled "current" that isn't. The IMD bulletin's own validity is **12 hours**; past
+   that it cannot authorise anything.
 
-5. **Geofence classes are semantically distinct.** Five classes, listed below. Do not collapse
+5. **Geofence classes are semantically distinct.** Five classes (below). Do not collapse
    them into one "restricted zone" type.
 
-6. **Region config only.** No coordinate, boundary name or language code in application logic.
-   "Does this only work for Tamil Nadu?" must be answered by a live config file swap.
+6. **Region config only.** No coordinate, boundary name or language code in application
+   logic. "Does this only work for Tamil Nadu?" must be answered by a live config swap.
 
-7. **`FORESHORE_MODE=live|fixture`.** Every source adapter respects it. Fixture mode replays
-   frozen snapshots from `data/fixtures/`, so a live demo cannot die on venue wifi.
-   **Live is the operating default and fixture is the parachute**, not the other way
-   round — a frozen bulletin reports itself expired two days later and is indistinguishable
-   from a real expiry, so every answer carries `run_mode` and the console chips it.
+7. **`FORESHORE_MODE=live|fixture`.** Every adapter respects it. Fixture replays frozen
+   snapshots from `data/fixtures/`. **Live is the default, fixture is the parachute** — a
+   frozen bulletin reports itself expired two days later and is indistinguishable from a
+   real expiry, so every answer carries `run_mode` and the console chips it.
 
 8. **Every query goes through the model; the deterministic path is the net, not the plan.**
-   `.env` is loaded at import (`config._load_env_file`, shell vars win,
-   `FORESHORE_SKIP_DOTENV=1` opts out — the test suite sets it), model calls retry
-   transient failures, and every answer reports `payloads.model.written_by`
-   (`"model"`/`"template"`) with `degraded_reason`. Nothing here weakens the fallback: a
-   template answer still carries the same verdict, evidence and trace. It just stops
-   being silent. Before this, a server started without its key answered from templates in
-   48 ms with no error anywhere and no way to tell from the output.
+   `.env` loads at import (`config._load_env_file`; shell vars win; `FORESHORE_SKIP_DOTENV=1`
+   opts out — the test suite sets it), model calls retry transient failures, and every
+   answer reports `payloads.model.written_by` (`"model"`/`"template"`) with
+   `degraded_reason`. A template answer still carries the same verdict, evidence and trace —
+   it just stops being silent.
 
 ---
 
 ## Architecture shape
 
-Two surfaces, one agent core. Agents, tools and reasoning traces are shared; only the renderer
+Two surfaces, one agent core. Agents, tools and traces are shared; only the renderer
 differs. This is the central architectural claim — preserve it.
 
 ```
-  Boat UI (Tamil, voice-first)          Shore console (English, fleet view)
+  Boat UI (Tamil-ready, voice-first)     Shore console (English, fleet view)
                 \                                    /
                  \__________  presentation  ________/
                                   |
@@ -165,26 +148,22 @@ differs. This is the central architectural claim — preserve it.
 Two paths, both mandatory:
 
 - **Request path** — user asks, agents answer.
-- **Push path** — background loop over tracked vessel positions, firing proactive hazard and
-  geofence-approach alerts.
+- **Push path** — background loop over tracked vessel positions firing proactive hazard,
+  weather-threshold and geofence-approach alerts. The PS says *proactive* and *when
+  approaching*; a request-response-only system fails the problem statement.
 
-The push path is a hard requirement (PS bullets say *proactive* and *when approaching*). A
-request-response-only system fails the problem statement. Build the loop early; it is the thing
-most competing teams will miss.
-
-Specialists mirror the PS's own vocabulary — planning, marine data discovery, weather
-intelligence, ocean analytics, geospatial reasoning, risk assessment, visualization, reporting,
-user interaction. Each gets a **restricted tool subset**; restriction is what makes the
-collaboration real rather than cosmetic.
+Ten specialists mirror the PS's own vocabulary (`agents/specialists.py`,
+`tools/registry.py::SPECIALISTS`). Each gets a **restricted tool subset** — restriction is
+what makes the collaboration real rather than cosmetic.
 
 ---
 
 ## Data sources — verified live
 
 **INCOIS and IMD GeoServer require a browser `User-Agent` and a `Referer` header.** Without
-them you get 403. This is the single most common way to lose a day.
+them you get 403. Single most common way to lose a day.
 
-### Everything below is keyless
+Everything below is keyless.
 
 | Purpose | Endpoint |
 |---|---|
@@ -193,16 +172,16 @@ them you get 403. This is the single most common way to lose a day.
 | AWS observations | same GeoServer → `imd:aws_data_layer` |
 | Cyclone track | same GeoServer → `imd:Cyclone_Track_V` (0 features when no active cyclone — valid, not an error) |
 | Cyclone cone + wind polygons | `gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC`, then `/polygons/getgeometry?eventtype=TC&eventid=&episodeid=` → `Poly_Cones`, `Poly_Red/Orange/Green`, track LineStrings |
-| **Official PFZ advisory lines** — ⚠ age-check required, see below | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
+| **Official PFZ advisory lines** — ⚠ age-check required | `incois.gov.in/geoserver/PFZ_Automation/ows` → `PFZ_Automation:pfzlines` (carries `Year`, `Julian_day`) |
 | PFZ sectors | `PFZ_Sectors:sector_new` — `SOUTH TAMILNADU` = `SEC006` |
 | Landing centres (harbour handoff) | `PFZ_LandingCentres:LandingCenters_29Apr2024` — 541+ named, district + lat/lon |
 | Ecologically sensitive zones | `incois.gov.in/geoserver/MHW/ows` → `MHW:CORAL_REEF_DISS`, `MHW:SEAGRASS_ZONE_DISS`, `MHW:MANGROVE_ZONE_DISS` |
 | Harmful algal bloom | `ABIS:HABSectors` (includes `"Gulf of Manmar (GoM)"`) |
 | **Waves — authoritative model** | `incois.gov.in/thredds/dodsC/osf/wave/WAVES_coast_YYYYMMDD.nc` |
 | Maximum wave height | `osf/mwh/MWH_coast_YYYYMMDD.nc` → `MAXW` |
-| Currents / winds / SST | `osf/currents/`, `osf/winds/`, `osf/sst/` (**not** `osf/chl` — see below) |
+| Currents / winds / SST | `osf/currents/`, `osf/winds/`, `osf/sst/` (**not** `osf/chl`) |
 | **Chlorophyll now** | `coastwatch.pfeg.noaa.gov/erddap` → `nesdisVHNnoaaSNPPnoaa20NRTchlaGapfilledDaily` (DINEOF gap-filled, 1/12°, ~3 d lag); cross-check `erdMH1chla1day_R2022NRT` (MODIS-Aqua, 1/24°) |
-| **Chlorophyll, decadal, ISRO sensor** | `erddap.incois.gov.in` → `incois_oceansat2_datasets` `CHL` — Oceansat-2 OCM, 2011-02-02→2020-05-01, closed archive, covers lat 0.1–27.9 / lon 46.7–99.3 |
+| **Chlorophyll, decadal, ISRO sensor** | `erddap.incois.gov.in` → `incois_oceansat2_datasets` `CHL` — Oceansat-2 OCM, 2011-02-02→2020-05-01, closed archive, lat 0.1–27.9 / lon 46.7–99.3 |
 | **SST, decadal + published anomaly** | `coastwatch.pfeg.noaa.gov/erddap` → `ncdcOisst21Agg` (`sst`, `anom`), daily 0.25°, 1981→present |
 | THREDDS catalogue | `incois.gov.in/thredds/catalog/osf/<product>/catalog.xml` |
 | Subsurface T/S 2004→present | `erddap.incois.gov.in` → `incois_argo_10d_VAM` |
@@ -222,54 +201,38 @@ source  Mww3 / ECMWF / With_Data_assimilation   (NetCDF history attribute)
 lag     ~2 days
 ```
 
-### Two INCOIS layers that answer 200 and are still unusable here
+### Two layers that answer 200 and are still unusable here
 
-**`osf/chl` does not cover India.** It is a VIIRS 4 km 3-day rolling composite of the
-**Pacific Islands Countries** — the filenames say so
-(`VIIRS-SNPP-Roll-<start>-<end>-4KM-PICountries-CHL.nc`) and so does the grid:
+**`osf/chl` does not cover India.** It is a VIIRS 4 km 3-day composite of the **Pacific
+Islands Countries** — filenames say so (`…-4KM-PICountries-CHL.nc`) and so does the grid:
 `lat -25.979 .. 18.021`, `lon 129.979 .. 215.021`. Palk Bay is 78–80.6°E. The NCSS `400`
-that `incois_thredds` fast-fails on is that miss, not a transient. Chlorophyll — one of
-the two signals INCOIS's own PFZ method rests on — was therefore never once available to
-this system, and `derive_pfz_zones` ran on SST alone from the day it was written while
-reporting itself as a two-signal product.
-Chlorophyll now comes from a fallback chain: INCOIS `osf/chl` first (it still wins in a
-basin that grid covers, which is why it stays first), then NOAA gap-filled VIIRS, then
-MODIS-Aqua. `payload["chlorophyll_source"]` names whichever answered.
+`incois_thredds` fast-fails on is that miss, not a transient. Chlorophyll now comes from a
+fallback chain: INCOIS `osf/chl` first (it still wins in a basin that grid covers), then
+NOAA gap-filled VIIRS, then MODIS-Aqua. `payload["chlorophyll_source"]` names whichever
+answered. Full account: `docs/DECISIONS.md` D1.
 
 **`PFZ_Automation:pfzlines` swings between today's advisory and a 2021 one.** Probed twice
-on 2026-09-06: at 10:40 UTC it held 65 features nationally, every one `Year=2021,
-Julian_day=248`; at 18:10 UTC it held 79 features, every one `Year=2026, Julian_day=249` —
-that same day. So the layer is live, but in the window before the day's advisory is
-published it serves five-year-old content **under identical field names and with no error
-of any kind**. `GetCapabilities` on that workspace shows no second layer to prefer.
-
-This is worse than a dead source, because it is right most of the time.
-`find_nearest_pfz` used to report whatever it got in the present tense — a model then
-dropped the date entirely and the answer read as today's advisory, which is invariant 4
-breached by omission. It now checks the advisory's age against
-`PFZ_ADVISORY_MAX_AGE_DAYS` (7 days, sized to the source's own ~3-per-week cadence) and,
-past that, returns `partial=True, missing=["incois_pfzlines_current"]` with a summary
-leading on the age: *"No current official Potential Fishing Zone advisory is available for
-this area. The most recent line INCOIS publishes here was issued on 2021-09-05, about 5
-years ago…"*. The line is still returned — it is real and official — but never as an
-answer to "where is the zone today". **Do not remove this check because the layer looks
-current when you test it.** It looked current to me too, eight hours after it did not.
+on 2026-09-06: at 10:40 UTC, 65 features nationally, every one `Year=2021, Julian_day=248`;
+at 18:10 UTC, 79 features, every one `Year=2026, Julian_day=249` — that same day. The layer
+is live, but in the window before the day's advisory is published it serves five-year-old
+content **under identical field names and with no error of any kind**. `GetCapabilities`
+shows no second layer to prefer. This is worse than a dead source, because it is right most
+of the time. `find_nearest_pfz` checks the advisory's age against
+`PFZ_ADVISORY_MAX_AGE_DAYS` (7 days, sized to the source's ~3-per-week cadence) and, past
+that, returns `partial=True, missing=["incois_pfzlines_current"]` with a summary leading on
+the age. The line is still returned — it is real and official — but never as an answer to
+"where is the zone today". **Do not remove this check because the layer looks current when
+you test it.** It looked current to me too, eight hours after it did not.
 
 ### Registration-gated (upside, not dependencies)
 
-- **IMD API** (`api.imd.gov.in`) — Bearer token, **not** IP whitelisting. Registration is 7
-  fields, no documents. Gives clean JSON instead of HTML/WFS parsing. Every field it provides is
-  already reachable keyless.
-- **MOSDAC** — batch downloader, not a live API. Registration is a plain form, no documents.
-  Never call it from inside an agent turn. Buys ISRO-product provenance (Oceansat-3 OCM,
-  INSAT SST). **This is now worth more than it was.** The old note said it buys no
-  capability INCOIS does not already provide; that was written believing `osf/chl` covered
-  this coast. It does not, so today's chlorophyll comes from NOAA. Oceansat-3 OCM would put
-  *live* chlorophyll over Indian waters back on an ISRO instrument, which for a
-  Department-of-Space problem statement is the single best provenance upgrade available.
-  Still batch-only, so it would feed a scheduled ingest, never an agent turn.
-- **Bhashini** (`dhruva-api.bhashini.gov.in`) — Tamil ASR/TTS. Government of India language
-  stack; same alignment argument as ISRO products.
+- **IMD API** (`api.imd.gov.in`) — Bearer token, not IP whitelisting. Clean JSON instead of
+  HTML/WFS parsing. Every field it provides is already reachable keyless.
+- **MOSDAC** — batch downloader, not a live API. Never call it from inside an agent turn.
+  Oceansat-3 OCM would put *live* chlorophyll over Indian waters back on an ISRO
+  instrument, which for a Department-of-Space PS is the single best provenance upgrade
+  available. Still batch-only, so it feeds a scheduled ingest, never an agent turn.
+- **Bhashini** (`dhruva-api.bhashini.gov.in`) — Tamil ASR/TTS. Same alignment argument.
 
 ---
 
@@ -277,7 +240,7 @@ current when you test it.** It looked current to me too, eight hours after it di
 
 | Class | Source | Severity | Warn / critical |
 |---|---|---|---|
-| `IMBL_HISTORIC_WATERS` | line_id **1306**, 1974-06-28 agreement, 9.10–10.08°N — **the Palk Bay / Rameswaram line** | legal, hard | 2.0 / 0.5 nm |
+| `IMBL_HISTORIC_WATERS` | line_id **1306**, 1974-06-28 agreement, 9.10–10.08°N — the Palk Bay / Rameswaram line | legal, hard | 2.0 / 0.5 nm |
 | `IMBL_MARITIME_BOUNDARY` | line_ids 1307 / 1310 / 1311, 1976 agreements | legal, hard | 2.0 / 0.5 nm |
 | `MPA` | Gulf of Mannar Marine National Park | restricted | 1.0 / 0.25 nm |
 | `ECO_SENSITIVE` | INCOIS `MHW` coral / seagrass / mangrove | advisory | 0.5 nm |
@@ -286,11 +249,9 @@ current when you test it.** It looked current to me too, eight hours after it di
 Plus dynamic `HAZARD_EXCLUSION` from cyclone polygons and high-wave cells.
 
 1306 is a **historic-waters** boundary — a different legal regime from the 1976 maritime
-boundary. Distinct copy, distinct lead distances, distinct severity, in Tamil and English.
-
-Each Marine Regions segment carries its treaty name and date as attributes, so "where did your
-maritime boundary come from?" is answered from the data itself. Digitising treaty coordinate
-lists by hand is unnecessary.
+boundary. Distinct copy, distinct lead distances, distinct severity. Each Marine Regions
+segment carries its treaty name and date as attributes, so "where did your maritime
+boundary come from?" is answered from the data itself.
 
 ---
 
@@ -314,13 +275,14 @@ Parse **all** descriptors present and take the **worst** band. Never average.
 Hard overrides that cap independently of sea state:
 - `PortSignal != NIL` → cap at `GO_WITH_CAUTION`
 - `StormSurgeTidalWarning` naming the user's district → cap at `GO_WITH_CAUTION`, and
-  `DO_NOT_ADVISE` if swell period ≥ 15 s (long-period swell in a shallow bay is the kallakkadal
-  signature)
+  `DO_NOT_ADVISE` if swell period ≥ 15 s (long-period swell in a shallow bay is the
+  kallakkadal signature)
 - bulletin older than its 12 h validity → `DO_NOT_ADVISE`
 - any required input missing → `DO_NOT_ADVISE` with handoff
 
-Vessel thresholds live in `config/vessels.yaml`, never in code. For a 0–50 nm small motorised
-boat: `GO` only up to SLIGHT, `GO_WITH_CAUTION` up to MODERATE, `DO_NOT_ADVISE` at ROUGH+.
+Vessel thresholds live in `config/vessels.yaml`, never in code. For a 0–50 nm small
+motorised boat: `GO` only up to SLIGHT, `GO_WITH_CAUTION` up to MODERATE, `DO_NOT_ADVISE`
+at ROUGH+.
 
 ---
 
@@ -336,78 +298,80 @@ imd_coastal_office_id: 6          # ACWC Chennai
 incois_pfz_sector: SEC006         # SOUTH TAMILNADU
 ```
 
-Keep a second region file (`gujarat_sir_creek.yaml`) working purely to demonstrate the swap.
+`config/regions/gujarat_sir_creek.yaml` is kept working purely to demonstrate the swap.
 
 ---
 
 ## Conventions
 
-- **Python** for ingestion, geospatial processing, agents. **TypeScript/React** for both UIs.
-- Geospatial: PostGIS for vectors (one docker-compose service), NetCDF/xarray for grids.
-  Routing and thresholding in numpy — not in the database. Everything EPSG:4326 unless stated.
-- Tools are **typed and deterministic**. Spatial operations are real geospatial computation —
-  nearest-polygon, raster thresholding, path planning over a cost field. The LLM selects and
-  sequences tools; it does not perform the geometry or the arithmetic.
-- **Routing uses A\* over a weighted grid** (Hs, wind, currents, steepness, bathymetry,
-  exclusion polygons, soft IMBL proximity penalty). Never LLM-generated waypoints. This is a
-  credibility tripwire — a fake router is instantly visible to an ISRO judge. Return the
-  per-leg cost breakdown so the UI can explain *why* the route bends.
+- **Python** for ingestion, geospatial processing, agents. **TypeScript/React** for both
+  UIs. PostGIS for vectors, NetCDF/xarray for grids. Routing and thresholding in numpy, not
+  in the database. EPSG:4326 unless stated.
+- Tools are **typed and deterministic**. Spatial operations are real geospatial computation
+  — nearest-polygon, raster thresholding, path planning over a cost field. The LLM selects
+  and sequences tools; it does not perform the geometry or the arithmetic.
+- **Routing is A\* over a weighted grid** (Hs, wind, currents, steepness, bathymetry,
+  exclusion polygons, soft IMBL proximity penalty). Never LLM-generated waypoints — a fake
+  router is instantly visible to an ISRO judge. Return the per-leg cost breakdown so the UI
+  can explain *why* the route bends.
 - **Agent orchestration is hand-rolled** over Anthropic tool use — not LangChain/LangGraph.
   Full control of the stored trace, fewer unknowns, and it differentiates from the field.
-- `FORESHORE_LLM_PROVIDER` selects the wire format: `anthropic` (production, native
-  shape), `gemini` or `nvidia`. The latter two are OpenAI-compatible and share one
-  adapter — `runtime.py`'s `OpenAICompatibleClient`, subclassed per provider for the base
-  URL, key env var and default model. Same `AgentRuntime` loop, same trace, same tool
-  schemas whichever answers; only the request/response shape on the wire differs. No key
-  for the selected provider still degrades to `ScriptedClient`, same as always.
-  Provider facts verified live, worth not rediscovering:
-  - `gemini-2.5-flash` is **retired for newly-issued keys** — 404 "no longer available to
-    new users", pointing at `gemini-3.6-flash`. That is the default.
-  - Gemini spends thinking tokens out of `max_tokens`, so answers came back cut off
-    mid-number. `GeminiClient.budget()` adds headroom. `reasoning_effort: "none"` is
-    rejected with a 400 by 3.6-flash; `minimal`/`low`/`medium`/`high` work.
-  - One FORESHORE query is several model calls (specialists + synthesis + polish), which
-    walks into Gemini's free-tier per-minute quota. NIM's free tier absorbs it.
-  - Tool `parameters` must carry `type: "object"`, and Gemini 400s on unknown JSON-Schema
-    keywords and on `required: []` — `_sanitise_schema` filters for the strictest
-    provider, which is harmless for the laxest.
-
-- **Answer kind.** `planner.classify_answer_kind` labels every utterance `ADVISORY` or
-  `INFORMATIONAL`, deterministically, from cue words alone: a decision cue wins outright,
-  then an information interrogative, and anything unclassifiable defaults to `ADVISORY`.
-  It governs **presentation only** — the safety spine, the verdict and the ceiling run
-  identically for both. `ADVISORY` leads with the verdict. `INFORMATIONAL` answers the
-  question, with the verdict attached as framed safety context (and its two-sentence lead
-  moved in front of the answer whenever the verdict is not `GO`). Without this, "which
-  vessels are closest to the IMBL?" was answered "Do not go." — a refusal-shaped reply to
-  a question that was never about going anywhere.
-
-- **The model path is audited like the template path.** `synthesis.enforce_answer_contract`
-  runs on model-written prose, after synthesis and again after polish: it restores a
-  dropped verdict sentence, restores a dropped named handoff (invariant 2), and reframes a
-  bare verdict opener on an informational answer. `answers_the_question` falls back to the
-  template when a model handed an informational question writes about the verdict instead
-  — checked on numeric-token overlap with the findings, because on this system the
-  substance of a finding is its numbers. Every repair is recorded on
-  `payloads.contract_repairs`, never hidden.
-
-- **Tool summaries are user-facing prose.** They are spliced verbatim into the answer, so
-  no `summary` may contain an enum code (`MPA`, `BREACH`, `DO_NOT_ADVISE`), an internal
-  tool name, an exception class, or a file path. Those belong on `error` or in `payload`
-  where the trace inspector shows them.
-- The answer text goes through a **final editor pass** (`agents/synthesis.py::polish_answer`)
-  after the verdict, the evidence audit and the ceiling. It rewrites for readability only:
-  any candidate that introduces a number, changes the verdict, drops the named handoff or
-  switches language is discarded and the unpolished text ships, with the reason recorded on
-  `payloads.polish`. Deterministic typography cleanup runs even with no model.
-  `FORESHORE_POLISH=off` disables the model half. Polish is never load-bearing — do not
-  move a safety decision into it.
 - Every tool call and result is persisted as a reasoning trace, retrievable and renderable.
   Explainability is a stored artifact, not post-hoc LLM narration.
 - Ingestion jobs are idempotent and record granule acquisition time on write.
 - Language is **auto-detected, never a dropdown** — script block first, then a romanised
-  fishing-domain lexicon (`agents/language.py`). **Output is English-only right now.** Do not
-  re-enable it piecemeal; see the gate below.
+  fishing-domain lexicon (`agents/language.py`). **Output is English-only right now** — see
+  the pin below.
+
+### LLM providers
+
+`FORESHORE_LLM_PROVIDER` selects the wire format: `anthropic` (production, native shape),
+`gemini` or `nvidia`. The latter two are OpenAI-compatible and share one adapter —
+`runtime.py`'s `OpenAICompatibleClient`, subclassed per provider. Same `AgentRuntime` loop,
+same trace, same tool schemas whichever answers. No key for the selected provider degrades
+to `ScriptedClient`. Facts worth not rediscovering:
+
+- `gemini-2.5-flash` is **retired for newly-issued keys** — 404 pointing at
+  `gemini-3.6-flash`. That is the default.
+- Gemini spends thinking tokens out of `max_tokens`, so answers came back cut off
+  mid-number. `GeminiClient.budget()` adds headroom. `reasoning_effort: "none"` is 400'd by
+  3.6-flash; `minimal`/`low`/`medium`/`high` work.
+- One query is several model calls, which walks into Gemini's free-tier per-minute quota.
+  NIM's free tier absorbs it.
+- Tool `parameters` must carry `type: "object"`; Gemini 400s on unknown JSON-Schema
+  keywords and on `required: []`. `_sanitise_schema` filters for the strictest provider.
+
+### Answer shaping
+
+- **Answer kind.** `planner.classify_answer_kind` labels every utterance `ADVISORY` or
+  `INFORMATIONAL`, deterministically, from cue words. It governs **presentation only** —
+  the safety spine, the verdict and the ceiling run identically for both. `ADVISORY` leads
+  with the verdict. `INFORMATIONAL` answers the question, with the verdict attached as
+  framed safety context. Without this, "which vessels are closest to the IMBL?" was
+  answered "Do not go."
+- **The model path is audited like the template path.** `synthesis.enforce_answer_contract`
+  runs on model-written prose, after synthesis and again after polish: restores a dropped
+  verdict sentence, restores a dropped named handoff (invariant 2), reframes a bare verdict
+  opener on an informational answer. `answers_the_question` falls back to the template when
+  a model handed an informational question writes about the verdict instead — checked on
+  numeric-token overlap, because here the substance of a finding is its numbers. Every
+  repair is recorded on `payloads.contract_repairs`, never hidden.
+- **Tool summaries are user-facing prose**, spliced verbatim into the answer. No `summary`
+  may contain an enum code (`MPA`, `BREACH`, `DO_NOT_ADVISE`), an internal tool name, an
+  exception class or a file path. Those belong on `error` or in `payload`.
+- **Final editor pass** (`agents/synthesis.py::polish_answer`) runs after the verdict, the
+  evidence audit and the ceiling. Readability only: any candidate that introduces a number,
+  changes the verdict, drops the named handoff or switches language is discarded and the
+  unpolished text ships, reason recorded on `payloads.polish`. `FORESHORE_POLISH=off`
+  disables the model half. Polish is never load-bearing.
+- **Prompt echo.** `_synthesis_prompt` is three labelled blocks — QUESTION / WHAT IS TRUE /
+  WHAT TO DO — because a 30B model copied interleaved directives into the answer.
+  `is_prompt_echo` is the deterministic net: an answer containing a brief-only phrase is
+  discarded for the template.
+- **Conversational front door.** `agents/conversation.py` sorts every utterance
+  deterministically before the planner — distress, capability, concept, smalltalk,
+  out-of-scope, or `OPERATIONAL` (handed to the planner unchanged). A verdict offered to
+  someone who said "hello" is not cautious, it is wrong.
 
 ### The English-only pin
 
@@ -415,32 +379,26 @@ Two region-config keys, deliberately distinct:
 
 | Key | Means |
 |---|---|
-| `languages: [en, ta]` | what the region **knows** — what `detect` may resolve to, what copy tables are maintained for |
-| `surface_languages: [en]` | what may **reach a screen** — rendered copy, alert bodies, tool payloads, anything a user or judge can read |
+| `languages: [en, ta]` | what the region **knows** — what `detect` may resolve to, what copy tables exist for |
+| `surface_languages: [en]` | what may **reach a screen** — rendered copy, alert bodies, tool payloads |
 
-`surface_languages` is the single gate. It defaults to `[primary_language]`, so a region that
-never declares it cannot leak a half-translated surface. Enforced at four points:
+`surface_languages` is the single gate. It defaults to `[primary_language]`, so a region
+that never declares it cannot leak a half-translated surface. Enforced at four points:
+`tools/geofence_tools.py` (`payload["messages"]` built per surface language),
+`models.py::Alert._localised` (`en` always present — a geofence breach must stay legible),
+`api/routes_reference.py::_region_dict` (local names fall back to English twins), and
+`agents/orchestrator.py` (`FORESHORE_LANGUAGE_LOCK`, defaults `en`).
 
-- `tools/geofence_tools.py` — `payload["messages"]` is built per surface language, not per
-  known language. Building the full set is what put Tamil in the console's trace inspector.
-- `models.py::Alert._localised` — gates `title`/`body` on the wire; `en` is always present,
-  because a geofence breach must stay legible whatever else is filtered.
-- `api/routes_reference.py::_region_dict` — `display_name_local` / `label_local` fall back to
-  their English twins while no non-English language surfaces.
-- `agents/orchestrator.py` — `FORESHORE_LANGUAGE_LOCK` (defaults `en`) pins the answer itself.
+**Why:** with no model reachable the answer is built by `synthesis.template_answer`, which
+splices tool observation strings in verbatim — and those are generated in English *inside
+the tools*. A Tamil query would return a Tamil headline wrapped around English bulletin and
+geofence text. Half-translated safety copy is worse than English safety copy.
 
-**Why**, and the thing to fix before lifting it: with no model reachable the answer is built by
-`synthesis.template_answer`, which splices tool observation strings in verbatim — and those are
-generated in English *inside the tools*. A Tamil query therefore returns a Tamil headline wrapped
-around English bulletin and geofence text. Half-translated safety copy is worse than English
-safety copy.
-
-Nothing is deleted. `ta`/`gu` stay in `languages`, `VERDICT_COPY` and `config/geofence.yaml` keep
-their Tamil and Gujarati entries, `planner.py` keeps its Tamil intent keywords, and
-`backend/tests/test_language.py` holds detection to its contract while it is switched off.
-Lifting the pin means `surface_languages` **plus** `FORESHORE_LANGUAGE_LOCK` **plus** localising
-the tool-level strings — all three, or the mixed output returns immediately. Revisit when
-Bhashini lands (open unknown 3).
+Nothing is deleted: `ta`/`gu` stay in `languages`, `VERDICT_COPY`, `config/geofence.yaml`
+and `config/weather_alerts.yaml`; `planner.py` keeps its Tamil intent keywords;
+`backend/tests/test_language.py` holds detection to its contract. Lifting the pin means
+`surface_languages` **plus** `FORESHORE_LANGUAGE_LOCK` **plus** localising the tool-level
+strings — all three, or the mixed output returns immediately.
 
 ---
 
@@ -449,51 +407,30 @@ Bhashini lands (open unknown 3).
 - Do not call MOSDAC synchronously from an agent.
 - Do not let the LLM emit a numeric value with no provenance record.
 - Do not present derived PFZ zones as the official INCOIS advisory.
-- Do not trust a `200` as evidence a source is usable. Check what the layer *contains* —
-  its dates and its extent — before building on it. Two sources passed the healthcheck for
-  weeks while being frozen and out-of-region respectively.
-- Do not plan a route to a destination nobody named by defaulting it to the origin. A
-  0.0 nm route is a router that did not run, presented as a route. Region config carries
+- Do not trust a `200` as evidence a source is usable. Check what the layer *contains* — its
+  dates and its extent — before building on it.
+- Do not plan a route to a destination nobody named by defaulting it to the origin. A 0.0 nm
+  route is a router that did not run, presented as a route. Region config carries
   `fishing_grounds`; with none configured, plan no route and say so.
 - Do not build the request path only — the push/alert loop is a scored requirement.
 - Do not collapse the geofence classes.
 - Do not hardcode region specifics.
 - Do not average disagreeing sources. Show them side by side and say which governs.
-- Do not dress CAPE up as a lightning probability. Open-Meteo `lightning_potential` is null over
-  India; if the IMD nowcast is unavailable, say so and abstain.
-- Do not claim real-time AIS. There is no public feed for Indian small boats — label simulated
-  vessel positions as simulated.
+- Do not dress CAPE up as a lightning probability. Open-Meteo `lightning_potential` is null
+  over India; if the IMD nowcast is unavailable, say so and abstain.
+- Do not claim real-time AIS. There is no public feed for Indian small boats — label
+  simulated vessel positions as simulated.
 - Do not "fix" a failing demo by relaxing the advisory ceiling or the abstention path.
 - Do not add features not traceable to a PS capability bullet. Scope creep costs marks.
 - Do not skip `User-Agent` / `Referer` on INCOIS and IMD GeoServer calls.
 
 ---
 
-## Open unknowns
-
-Most of the original list is resolved. What remains:
-
-1. IMD API key approval turnaround — not blocking, keyless fallbacks verified
-2. MOSDAC account approval turnaround — not blocking
-3. Tamil ASR accuracy on fishing-domain vocabulary (species names, tide terms, "PFZ").
-   Realistic WER 15–20%, worse in domain. Needs mitigation design — lexicon biasing plus spoken
-   readback confirmation — not just measurement
-4. Routing cost-field weights, confidence bands, geofence lead distances — derive from measured
-   cadence (OSF ~2-day lag, chlorophyll 3-day composite, bulletin 12 h validity). Do not invent
-5. Offshore connectivity beyond ~10–12 km. Geofence proximity needs no network and runs
-   client-side; hazard push does. GEMINI/GAGAN and NavIC messaging are the real-world channel
-
-The name "Foreshore" is not clear in marine software — `Foreshore Technology` sells dredge
-monitoring software. None in fisheries advisory, none Indian. Fine for SIH; do not claim the
-name is unowned.
-
----
-
 ## Query latency — measured, not guessed
 
 96% of a query's wall clock is model calls, not data. Tools total ~0.3 s warm; the
-`data/cache` TTL is 600 s, so **pre-warm before a demo** — cold INCOIS OSF NetCDF grids
-are the one expensive fetch.
+`data/cache` TTL is 600 s, so **pre-warm before a demo** — cold INCOIS OSF NetCDF grids are
+the one expensive fetch.
 
 Baseline was 30.5 s / 8 sequential model calls. Now ~15 s mean, 17 s worst, 5 calls:
 
@@ -503,11 +440,7 @@ Baseline was 30.5 s / 8 sequential model calls. Now ~15 s mean, 17 s worst, 5 ca
 | Their evidence is seeded, not re-fetched | `runtime.run(prior_results=…)` | 3 turns → 1 per specialist |
 | `SPECIALIST_MAX_TURNS = 2` | `orchestrator` | bounds a model that re-reads a tool |
 | `DEFAULT_SPECIALIST_TIMEOUT_S = 12` | `orchestrator` | one slow specialist stops setting the floor |
-| Polish folded into `SYNTHESIS_SYSTEM` | `synthesis` | one less call, ~12 s on free NIM |
-
-The seeding was a real bug, not a tuning knob: `_specialist_brief` said "the results of
-those calls are already in your context" and the orchestrator passed nothing, so each
-specialist re-fetched its own tools.
+| Polish folded into `SYNTHESIS_SYSTEM` | `synthesis` | one less call |
 
 Escape hatches, all env: `FORESHORE_SPECIALISTS=serial`, `FORESHORE_SPECIALIST_TIMEOUT_S`,
 `FORESHORE_POLISH=on|off|auto`, `FORESHORE_LLM_ATTEMPTS`.
@@ -521,18 +454,24 @@ never completion order**, so the trace a judge reads is identical run to run.
 `POST /api/query/stream` — same body and same result as `/api/query`, delivered as SSE:
 `status` (phase + detail) → `token` (text deltas) → `done` (the full outcome) or `error`.
 
-Only the synthesis turn streams, and only because it declares no tools — a streamed
-tool-call turn would mean reassembling partial JSON arguments for output nobody reads.
+Only the synthesis turn streams, and only because it declares no tools. **Streamed tokens
+are a draft.** Every deterministic guard runs after the last delta: the unsourced-number
+audit, `enforce_answer_contract`, the ceiling wording. `done.text` is authoritative and the
+client replaces rather than appends. Both surfaces label it a draft while it streams.
 
-**Streamed tokens are a draft.** Every deterministic guard runs after the last delta: the
-unsourced-number audit, `enforce_answer_contract`, the ceiling wording. `done.text` is
-authoritative and the client replaces rather than appends. Both surfaces label it as a
-draft while it streams. Streaming is presentation; the audit is the product.
+---
 
-### Prompt echo
+## Open unknowns
 
-Dropping the editor pass exposed that `_synthesis_prompt` interleaved directives with the
-facts they were about, and a 30B model copied its own instructions into the answer. The
-prompt is now three labelled blocks — QUESTION / WHAT IS TRUE / WHAT TO DO — and
-`is_prompt_echo` is the deterministic net: an answer containing a brief-only phrase is
-discarded for the template.
+1. IMD API key approval turnaround — not blocking, keyless fallbacks verified
+2. MOSDAC account approval turnaround — not blocking
+3. Tamil ASR accuracy on fishing-domain vocabulary. Realistic WER 15–20%, worse in domain.
+   Needs mitigation design — lexicon biasing plus spoken readback confirmation
+4. Routing cost-field weights, confidence bands, geofence lead distances — derive from
+   measured cadence (OSF ~2-day lag, chlorophyll 3-day composite, bulletin 12 h validity).
+   Do not invent
+5. Offshore connectivity beyond ~10–12 km. Geofence proximity needs no network and runs
+   client-side; hazard push does. GEMINI/GAGAN and NavIC messaging are the real channel
+
+`Foreshore Technology` sells dredge monitoring software — none in fisheries advisory, none
+Indian. Fine for SIH; do not claim the name is unowned.

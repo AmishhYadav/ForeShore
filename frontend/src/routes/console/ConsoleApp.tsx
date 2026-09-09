@@ -18,13 +18,14 @@ import FleetMap from "./FleetMap";
 import AlertQueue from "./AlertQueue";
 import TraceInspector from "./TraceInspector";
 import AnalystQuery from "./AnalystQuery";
+import DataTab from "./DataTab";
 import ArchitecturePanel from "./ArchitecturePanel";
 import RegionSwitcher from "./RegionSwitcher";
 import { useConsoleData } from "./useConsoleData";
 import { formatTimeAgo } from "./format";
 import type { EvidencePanelRow, QueryOutcome } from "@shared/types";
 
-type Tab = "fleet" | "query" | "trace" | "system";
+type Tab = "fleet" | "query" | "data" | "trace" | "system";
 
 /** RegionInfo.basemap is an opaque `Record<string, unknown>` in shared/types.ts */
 interface BasemapCenterZoom {
@@ -91,6 +92,7 @@ export default function ConsoleApp() {
           [
             { id: "fleet", label: "Fleet", icon: "🗺️" },
             { id: "query", label: "Query", icon: "💬" },
+            { id: "data", label: "Data", icon: "📡" },
             { id: "trace", label: "Traces", icon: "🔍" },
             { id: "system", label: "System", icon: "⚙️" },
           ] as { id: Tab; label: string; icon: string }[]
@@ -127,6 +129,7 @@ export default function ConsoleApp() {
                 zoom={basemap?.zoom}
                 selectedVesselId={selectedVesselId}
                 onSelectVessel={selectVessel}
+                alerts={data.alerts}
               />
             </section>
             <section className="console-alerts-pane">
@@ -146,6 +149,13 @@ export default function ConsoleApp() {
         {tab === "query" && (
           <div className="console-query-pane animate-fade-in">
             <AnalystQuery onQueryComplete={handleQueryComplete} onViewTrace={viewTrace} />
+          </div>
+        )}
+
+        {/* Data Tab */}
+        {tab === "data" && (
+          <div className="console-data-pane animate-fade-in">
+            <DataTab region={data.region} />
           </div>
         )}
 

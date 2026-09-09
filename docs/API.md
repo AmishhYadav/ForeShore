@@ -31,7 +31,12 @@ The whole agent path: plan, specialists, verdict, ceiling, synthesis.
   "language": null,                          // optional; null = auto-detect and mirror
   "region_id": null,                         // optional; null = configured default
   "surface": "boat",                        // "boat" | "console"
-  "use_model": true
+  "use_model": true,
+  "session_id": null                        // optional; omit on turn 1, echo back
+                                             // QueryOutcome.session_id on every follow-up
+                                             // in the same conversation (PS bullet 3) — an
+                                             // omitted lat/lon/vessel_class is then filled
+                                             // from the previous turn's, never a reading
 }
 ```
 
@@ -90,7 +95,9 @@ Response is `QueryOutcome.to_dict()` from `agents/orchestrator.py`:
   "missing": ["incois_osf_mwh"],
   "duration_ms": 3740,
   "architecture": [ { "name", "role", "ps_capability", "tools" } ],
-  "scenario": null                    // see "Scenario exploration" below
+  "scenario": null,                   // see "Scenario exploration" below
+  "session_id": "…"                   // always present; send back as the request's
+                                       // `session_id` on the next turn (PS bullet 3)
 }
 ```
 
@@ -146,6 +153,29 @@ Tool 9 alone: `{lat, lon, heading_deg?, speed_kn?, classes?}`. The boat UI also 
 check client-side when offline; this endpoint is the online path and must return the same
 class semantics.
 
+### `GET /api/conditions?lat&lon&when` — raw source readings, no agent turn
+
+Calls `get_sea_state`, `get_tide`, `get_currents`, `get_weather` and
+`get_lightning_nowcast` directly — no planner, no verdict, no ceiling, no model. Backs the
+console's Data tab: proof that FORESHORE is reading real sensors, with every
+`Observation`'s full provenance attached, not a narrated summary.
+
+```jsonc
+{
+  "lat": 9.2876, "lon": 79.3129, "generated_at": "…",
+  "sections": [
+    { "key": "sea_state", "label": "Sea state", "tool": "get_sea_state", "ok": true,
+      "summary": "…", "observations": [ /* Observation, each with its Provenance */ ],
+      "payload": {}, "error": null, "partial": false, "missing": [] },
+    // … "tide", "currents", "weather", "lightning", same ToolResultEnvelope shape
+  ]
+}
+```
+
+A section that came back `partial`/`ok=false` still renders (`missing` names what could
+not be reached) — it is never dropped from `sections`, per the same staleness-surfaced
+invariant every other answer carries.
+
 ---
 
 ## Fleet and push path
@@ -162,6 +192,27 @@ AIS for Indian small boats.
 `distance_nm`, `eta_seconds`, `acknowledged_at`, `evidence`.
 
 ### `POST /api/alerts/{alert_id}/ack`  → the updated `Alert`.
+
+### `POST /api/alerts/broadcast` — console-to-fleet live alert
+
+The console-authored counterpart to the automated geofence/weather/hazard alerts: a
+watchstander pushes an alert onto the exact same `WS /ws/alerts` transport and
+`AlertStore` those use, so every already-connected client (boat UI, another console tab,
+a phone running either) renders it the instant this call resolves. No dedupe — every
+call is a fresh, deliberate emission, unlike the automated path's threshold re-scans.
+
+```jsonc
+// request
+{ "vessel_id": null, "level": "WARN", "title": "…", "body": "…", "by": "console" }
+// vessel_id omitted or null -> every vessel currently in the fleet snapshot
+
+// response
+{ "broadcast_id": "a1b2c3d4", "sent": 6, "alerts": [ /* Alert, one per targeted vessel */ ] }
+```
+
+`Alert.kind` is `"operator"` for these — distinct from the automated
+`geofence`/`hazard`/`weather`/`verdict_change` kinds so a console or trace can always
+tell a human-issued alert from a derived one.
 
 ### `WS /ws/alerts`
 

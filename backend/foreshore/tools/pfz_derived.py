@@ -655,11 +655,19 @@ def derive_pfz_zones(bbox: list[float] | None = None, when: str | None = None) -
     # ("use find_nearest_pfz for that") — it is spliced verbatim into the answer a
     # fisherman reads, and no reader of that answer can call a tool. The distinction it
     # was drawing is the load-bearing part and stays, said in words.
+    #
+    # Deliberately does NOT say the official line "is reported separately above" — this
+    # tool has no visibility into the rest of the plan, and the `ocean_productivity`
+    # intent (planner.py) plans this tool without `find_nearest_pfz` at all, which made
+    # that claim false on every "which regions have high chlorophyll" question: nothing
+    # was reported above it. Names the official line as a separate product that exists,
+    # without asserting this answer carries it.
     summary = (
         "FORESHORE-derived, INDICATIVE fishing-zone estimate — this is FORESHORE's own "
-        "cross-check, not the official INCOIS Potential Fishing Zone advisory, which is "
-        "reported separately above. Computed from the INCOIS Ocean State Forecast "
-        f"sea-surface-temperature run for {sst_gs.file_date.isoformat()}: {finding}"
+        "cross-check, never the official INCOIS Potential Fishing Zone advisory line "
+        "(a separate product; ask for it by name if you need it). Computed from the "
+        f"INCOIS Ocean State Forecast sea-surface-temperature run for "
+        f"{sst_gs.file_date.isoformat()}: {finding}"
     )
     if chlorophyll_available and chl_gs is not None and chlorophyll_source is not None:
         if chlorophyll_source == _INCOIS_CHL_SOURCE_LABEL:

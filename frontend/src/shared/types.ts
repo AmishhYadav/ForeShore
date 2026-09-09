@@ -9,6 +9,16 @@
 export type VerdictLevel = "GO" | "GO_WITH_CAUTION" | "DO_NOT_ADVISE";
 
 /** Uniform envelope every tool in the registry returns — ToolResult.to_dict(). */
+/** GET /api/conditions response — every raw source reading at one point, for the
+ *  console's Data tab. Each section is a `ToolResultEnvelope` (same shape a specialist's
+ *  own tool call produces) plus `key`/`label` for the tab's rendering. */
+export interface ConditionsPayload {
+  lat: number;
+  lon: number;
+  generated_at: string;
+  sections: (ToolResultEnvelope & { key: string; label: string })[];
+}
+
 export interface ToolResultEnvelope<TPayload = Record<string, unknown>> {
   tool: string;
   ok: boolean;
@@ -222,6 +232,10 @@ export interface QueryRequest {
   region_id?: string | null;
   surface: "boat" | "console";
   use_model?: boolean;
+  /** PS bullet 3, multi-turn conversation. Omit on the first message of a conversation;
+   * echo back `QueryOutcome.session_id` on every follow-up so an omitted position or
+   * vessel class is filled from the previous turn instead of the region's anchor port. */
+  session_id?: string | null;
 }
 
 /** POST /api/query response — QueryOutcome.to_dict(). */
@@ -272,6 +286,9 @@ export interface QueryOutcome {
    * departure times ("what if I leave at 04:00 instead of 06:00") and the request
    * carried no explicit `when`. `null` on every ordinary answer. */
   scenario: ScenarioComparison | null;
+  /** Always present. Send it back as `QueryRequest.session_id` on the next message in
+   * this conversation to get multi-turn follow-up resolution. */
+  session_id?: string | null;
 }
 
 /** One side of a scenario comparison — orchestrator.py's ScenarioOption.to_dict(). */
@@ -297,7 +314,7 @@ export interface ScenarioComparison {
 export interface Alert {
   alert_id: string;
   vessel_id: string;
-  kind: "geofence" | "hazard" | "weather" | "verdict_change";
+  kind: "geofence" | "hazard" | "weather" | "verdict_change" | "operator";
   level: AlertLevel;
   /** `en` is always present; every other code is gated by the region's
    *  `surface_languages` (models.py's `Alert._localised`) and absent while the

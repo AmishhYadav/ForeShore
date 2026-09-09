@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { streamQuery } from "@shared/api";
 import type { Handoff, QueryOutcome, Verdict } from "@shared/types";
+import TimeSeriesChart from "./TimeSeriesChart";
 import {
   formatDistanceNm,
   formatDuration,
@@ -54,6 +55,9 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [phase, setPhase] = useState<{ phase: string; detail: string } | null>(null);
+  // PS bullet 3: sent back on every follow-up so "what about tomorrow morning?" resolves
+  // against this conversation's last position/vessel class instead of the anchor port.
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // A new submit cancels whatever is still in flight, and unmounting mid-stream aborts
@@ -78,7 +82,7 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
     setPhase(null);
 
     await streamQuery(
-      { text: trimmed, surface: "console", use_model: true },
+      { text: trimmed, surface: "console", use_model: true, session_id: sessionId },
       {
         onStatus: (s) => setPhase({ phase: s.phase, detail: s.detail }),
         onToken: (delta) => setStreamingText((prev) => prev + delta),
@@ -89,6 +93,7 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
           setStreamingText("");
           setPhase(null);
           setOutcome(res);
+          if (res.session_id) setSessionId(res.session_id);
           onQueryComplete(res);
           setLoading(false);
         },
@@ -116,6 +121,16 @@ export default function AnalystQuery({ onQueryComplete, onViewTrace }: AnalystQu
           <button type="submit" className="btn btn--primary" disabled={loading || !text.trim()}>
             {loading ? "Asking…" : "Ask"}
           </button>
+          {sessionId && (
+            <button
+              type="button"
+              className="btn btn--link"
+              title="Forget this conversation's position/vessel context and start fresh"
+              onClick={() => setSessionId(null)}
+            >
+              New conversation
+            </button>
+          )}
         </div>
       </form>
       {error && <p className="empty-note empty-note--error">{error}</p>}
@@ -261,6 +276,8 @@ function QueryResult({
       )}
 
       {evidenceRows.length > 0 && <EvidenceTable rows={evidenceRows} />}
+
+      <ProductivityCharts outcome={outcome} />
 
       <ResultFooter specialists={outcome.specialists_used} missing={outcome.missing} />
     </div>
@@ -458,6 +475,29 @@ function EvidenceTable({ rows }: { rows: RuntimeEvidenceRow[] }) {
         </table>
       </div>
     </details>
+  );
+}
+
+/**
+ * `get_productivity_history` (tool 13, "why has fish productivity declined here?") is
+ * the only tool whose payload carries a raw, chartable point series today — see
+ * backend/foreshore/tools/productivity.py: chlorophyll and SST trends are returned as a
+ * fitted slope only, but the Argo subsurface-temperature trend keeps its retrieved
+ * `{t, v}` series. Renders nothing when the tool did not run or its series is too
+ * short to plot (`TimeSeriesChart` itself no-ops below 2 points).
+ */
+function ProductivityCharts({ outcome }: { outcome: QueryOutcome }) {
+  const payload = outcome.payloads.get_productivity_history as
+    | { series?: { argo_temperature?: { t: string; v: number }[] } }
+    | undefined;
+  const series = payload?.series?.argo_temperature;
+  if (!series || series.length < 2) return null;
+  return (
+    <TimeSeriesChart
+      title="Subsurface temperature trend (INCOIS Argo)"
+      unit="°C"
+      points={series}
+    />
   );
 }
 

@@ -54,6 +54,7 @@ from . import conversation, specialists
 from .conversation import SHORT_CIRCUIT_KINDS, classify_utterance
 from .language import detect, normalise
 from .planner import Plan, plan as build_plan, resolve_scenario_times
+from ..store.conversations import ConversationStore, new_turn
 from .runtime import AgentRuntime, ScriptedClient
 from .synthesis import compose
 
@@ -119,6 +120,12 @@ class Query:
     surface: Literal["boat", "console"] = "boat"
     #: Specialist reasoning turns are the slow part; a console analyst may want them off.
     use_model: bool = True
+    #: PS bullet 3, "multi-turn contextual conversation, query refinement". ``None`` (no
+    #: session) is a first-time or stateless caller — identical to today's behaviour.
+    #: Given, an omitted `lat`/`lon`/`vessel_class` is filled from the session's last turn
+    #: (the question's *shape*, never a reading — see `store/conversations.py`), so "what
+    #: about tomorrow morning?" does not silently snap back to the region's anchor port.
+    session_id: str | None = None
 
 
 @dataclass
@@ -136,6 +143,9 @@ class QueryOutcome:
     #: Populated only when the utterance itself named two explicit departure times (PLAN.md
     #: Phase 7 item 4) — see :func:`_build_scenario`. ``None`` on every ordinary answer.
     scenario: "ScenarioComparison | None" = None
+    #: Echoed back so a caller that sent one keeps using it, and a caller that sent none
+    #: gets one to start a session with — see `Query.session_id`.
+    session_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         from ..config import mode as run_mode
@@ -148,6 +158,7 @@ class QueryOutcome:
             "specialists_used": self.specialists_used,
             "architecture": specialists.architecture(),
             "scenario": self.scenario.to_dict() if self.scenario else None,
+            "session_id": self.session_id,
             # "live" or "fixture", on every answer. A frozen-snapshot answer is a valid
             # answer — invariant 7 exists so a venue's wifi cannot kill a demo — but it
             # is answering about a different day, and a bulletin two days stale reads
@@ -283,10 +294,32 @@ def answer(
     # position defaulting and before the scenario-time detection below, so a distress
     # utterance that happens to name two clock times is still answered as a distress.
     kind = classify_utterance(query.text, glossary_terms=load_glossary().aliases())
+
+    # -- Multi-turn session (PS bullet 3) ------------------------------------------------
+    # A session id is always returned, even to a first-time caller, so the next turn has
+    # one to send. History only ever fills in a *question shape* that this turn omitted
+    # (position, vessel class) — never a reading; see store/conversations.py's module
+    # docstring for why that line is drawn where it is.
+    session_id = query.session_id or str(uuid4())
+    conversation_store = ConversationStore()
+    if query.session_id:
+        last_turn = conversation_store.last(query.session_id)
+        if last_turn is not None:
+            if query.lat is None:
+                query.lat = last_turn.lat
+            if query.lon is None:
+                query.lon = last_turn.lon
+            if query.vessel_class is None:
+                query.vessel_class = last_turn.vessel_class
+    query.session_id = session_id
+
     if kind in SHORT_CIRCUIT_KINDS:
-        return _short_circuit_answer(
-            kind, query, language=language, region=region, query_id=query_id,
-            traces=traces or TraceStore(),
+        return replace(
+            _short_circuit_answer(
+                kind, query, language=language, region=region, query_id=query_id,
+                traces=traces or TraceStore(),
+            ),
+            session_id=session_id,
         )
 
     # A caller-supplied `when` always means "answer for exactly this instant" — only an
@@ -562,6 +595,24 @@ def answer(
 
     clear_evidence(query_id)
 
+    try:
+        conversation_store.append(new_turn(
+            session_id=session_id,
+            query_id=query_id,
+            text=query.text,
+            utterance_kind="OPERATIONAL",
+            intents=tuple(plan.intents),
+            answer_kind=plan.answer_kind,
+            lat=query.lat,
+            lon=query.lon,
+            when=plan.when,
+            vessel_class=query.vessel_class,
+            region_id=region.region_id,
+            verdict_level=verdict.level if verdict else None,
+        ))
+    except Exception:  # noqa: BLE001 — session memory is a convenience, never load-bearing
+        pass
+
     return QueryOutcome(
         answer=composed,
         plan=plan,
@@ -571,6 +622,7 @@ def answer(
         duration_ms=int((time.perf_counter() - t0) * 1000),
         missing=_dedupe(missing),
         specialists_used=_dedupe(specialists_used),
+        session_id=session_id,
     )
 
 
@@ -611,9 +663,9 @@ def _short_circuit_answer(
             query.text, language=language, glossary=load_glossary(), region=region,
         )
     elif kind == "SMALLTALK":
-        reply = conversation.smalltalk_reply(language, region=region)
+        reply = conversation.smalltalk_reply(language, region=region, text=query.text)
     else:
-        reply = conversation.out_of_scope_reply(language, region=region)
+        reply = conversation.out_of_scope_reply(language, region=region, text=query.text)
 
     plan = Plan(
         query_id=query_id,

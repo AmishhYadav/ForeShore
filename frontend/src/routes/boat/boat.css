@@ -485,6 +485,31 @@
   max-width: 160px;
 }
 
+.vessel-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--marine-on-surface-variant);
+}
+
+.vessel-identity__label {
+  white-space: nowrap;
+}
+
+.vessel-identity__select {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--marine-on-surface);
+  background: var(--ink-700);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm, 6px);
+  padding: 4px 6px;
+  max-width: 120px;
+}
+
 /* ── Footer ────────────────────────────────────────────────────────────────── */
 
 .boat-app__footer {

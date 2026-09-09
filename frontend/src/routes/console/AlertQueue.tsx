@@ -4,6 +4,7 @@
  * `POST /api/alerts/{id}/ack` — see `useConsoleData.ack`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { broadcastAlert } from "@shared/api";
 import type { Alert, AlertLevel, VesselState } from "@shared/types";
 import {
   alertLevelVar,
@@ -41,6 +42,7 @@ const KIND_LABEL: Record<Alert["kind"], string> = {
   hazard: "Hazard",
   weather: "Weather",
   verdict_change: "Verdict change",
+  operator: "Operator",
 };
 
 interface AlertQueueProps {
@@ -204,6 +206,8 @@ export default function AlertQueue({
         )}
       </header>
 
+      <BroadcastComposer vessels={vessels} selectedVesselId={selectedVesselId} />
+
       <div className="alert-queue__list" ref={listRef}>
         {sorted.length === 0 && <p className="alert-queue__empty">No active alerts.</p>}
         {selectedVesselName && selectedCount === 0 && (
@@ -342,6 +346,126 @@ export default function AlertQueue({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The console-to-boat push button — see `docs/API.md`'s `POST /api/alerts/broadcast`.
+ * Composes one alert, sends it to one vessel or the whole tracked fleet, and it reaches
+ * every subscribed client (boat UI, another console, a phone running either) over the
+ * live `WS /ws/alerts` socket within the same tick this console's own queue updates —
+ * no separate wiring needed for it to show up above, since `useConsoleData` already
+ * upserts every pushed "alert" message into `alerts`.
+ */
+function BroadcastComposer({
+  vessels,
+  selectedVesselId,
+}: {
+  vessels: VesselState[];
+  selectedVesselId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState<string>("");
+  const [level, setLevel] = useState<AlertLevel>("WARN");
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedVesselId) setTarget(selectedVesselId);
+  }, [selectedVesselId]);
+
+  async function handleSend() {
+    if (!title.trim() || !body.trim() || sending) return;
+    setSending(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await broadcastAlert({
+        vessel_id: target || null,
+        level,
+        title: title.trim(),
+        body: body.trim(),
+      });
+      const targetLabel = target
+        ? vessels.find((v) => v.vessel_id === target)?.name ?? target
+        : `all ${res.sent} tracked vessel${res.sent === 1 ? "" : "s"}`;
+      setResult(`Sent to ${targetLabel}.`);
+      setTitle("");
+      setBody("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="alert-broadcast">
+      <button
+        type="button"
+        className="alert-broadcast__toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="alert-broadcast__title">Broadcast an alert</span>
+        <span className="alert-broadcast__hint">Push it live to the fleet's screens now</span>
+      </button>
+      {open && (
+        <div className="alert-broadcast__form">
+          <div className="alert-broadcast__row">
+            <label>
+              To
+              <select value={target} onChange={(e) => setTarget(e.target.value)}>
+                <option value="">All tracked vessels</option>
+                {vessels.map((v) => (
+                  <option key={v.vessel_id} value={v.vessel_id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Level
+              <select value={level} onChange={(e) => setLevel(e.target.value as AlertLevel)}>
+                <option value="INFO">INFO</option>
+                <option value="WARN">WARN</option>
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="BREACH">BREACH</option>
+              </select>
+            </label>
+          </div>
+          <input
+            type="text"
+            placeholder="Title — e.g. Port closed at Rameswaram"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={120}
+          />
+          <textarea
+            placeholder="Message — what the crew needs to do"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={2}
+            maxLength={400}
+          />
+          <div className="alert-broadcast__row alert-broadcast__row--actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={sending || !title.trim() || !body.trim()}
+              onClick={handleSend}
+            >
+              {sending ? "Sending…" : "Send now"}
+            </button>
+            {result && <span className="alert-broadcast__result">{result}</span>}
+            {error && <span className="alert-broadcast__result alert-broadcast__result--error">{error}</span>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

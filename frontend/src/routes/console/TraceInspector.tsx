@@ -60,11 +60,13 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getTrace } from "@shared/api";
 import type { EvidencePanelRow, TraceStep, TraceTreeNode, VerdictLevel } from "@shared/types";
 import {
+  agentLabel,
   formatClock,
   formatDuration,
   formatTimeAgo,
   freshnessVar,
   shortId,
+  toolLabel,
   verdictBgVar,
   verdictLabel,
   verdictVar,
@@ -143,6 +145,14 @@ function humanizeArgKey(key: string): string {
   const sentence = words.join(" ").toLowerCase();
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
+
+/** `GenericStepCard`'s fallback when a step carries no `tool` (a `kind: "synthesis"` or
+ *  `"error"` bookkeeping step) — the raw kind is a fine word already, this only covers
+ *  the two that read oddly bare. */
+const GENERIC_KIND_LABELS: Record<string, string> = {
+  synthesis: "Answer composed",
+  error: "Error",
+};
 
 const RULE_LABELS: Record<string, string> = {
   bulletin_expired: "IMD bulletin expired",
@@ -508,8 +518,8 @@ function ToolCard({
   return (
     <article className={`trace-card${card.ok ? "" : " trace-card--error"}`}>
       <header className="trace-card__head">
-        <span className="trace-card__tool">{card.tool}</span>
-        <span className="trace-card__agent">{card.agent}</span>
+        <span className="trace-card__tool" title={card.tool}>{toolLabel(card.tool)}</span>
+        <span className="trace-card__agent">{agentLabel(card.agent)}</span>
         <span className="trace-card__duration">{formatDuration(card.durationMs)}</span>
       </header>
       {card.why && <p className="trace-card__why">{card.why}</p>}
@@ -551,7 +561,7 @@ function PlanCard({ step, plannedCount }: { step: TraceStep; plannedCount: numbe
     <article className="trace-card">
       <header className="trace-card__head">
         <span className="trace-card__tool">Plan</span>
-        <span className="trace-card__agent">{step.agent}</span>
+        <span className="trace-card__agent">{agentLabel(step.agent)}</span>
         <span className="trace-card__duration">{formatDuration(step.duration_ms)}</span>
       </header>
       {step.why && <p className="trace-card__why">{step.why}</p>}
@@ -607,7 +617,7 @@ function CeilingCard({ step }: { step: TraceStep }) {
     <article className="trace-card">
       <header className="trace-card__head">
         <span className="trace-card__tool">Advisory ceiling</span>
-        <span className="trace-card__agent">{step.agent}</span>
+        <span className="trace-card__agent">{agentLabel(step.agent)}</span>
         <span className="trace-card__duration">{formatDuration(step.duration_ms)}</span>
       </header>
       {step.why && <p className="trace-card__why">{step.why}</p>}
@@ -647,8 +657,10 @@ function GenericStepCard({ step }: { step: TraceStep }) {
   return (
     <article className={`trace-card${step.ok ? "" : " trace-card--error"}`}>
       <header className="trace-card__head">
-        <span className="trace-card__tool">{step.tool ?? step.kind}</span>
-        <span className="trace-card__agent">{step.agent}</span>
+        <span className="trace-card__tool" title={step.tool ?? step.kind}>
+          {step.tool ? toolLabel(step.tool) : GENERIC_KIND_LABELS[step.kind] ?? step.kind}
+        </span>
+        <span className="trace-card__agent">{agentLabel(step.agent)}</span>
         <span className="trace-card__duration">{formatDuration(step.duration_ms)}</span>
       </header>
       {step.why && <p className="trace-card__why">{step.why}</p>}

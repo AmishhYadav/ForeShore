@@ -366,7 +366,10 @@ class Alert:
 
     alert_id: str
     vessel_id: str
-    kind: Literal["geofence", "hazard", "weather", "verdict_change"]
+    #: "operator" = console-issued manual broadcast (`POST /api/alerts/broadcast`) — the
+    #: same push transport, but authored by a human watchstander rather than derived from
+    #: a scan of tracked positions against a threshold.
+    kind: Literal["geofence", "hazard", "weather", "verdict_change", "operator"]
     level: AlertLevel
     title_en: str
     title_ta: str

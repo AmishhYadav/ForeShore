@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -31,7 +31,10 @@ from ..tools.pfz import find_nearest_pfz
 from ..tools.pfz_derived import derive_pfz_zones
 from ..tools.productive_waters import find_productive_waters
 from ..tools.routing_tools import plan_route
+from ..tools.sea_state import get_sea_state
+from ..tools.tide import get_currents, get_tide
 from ..tools.verdict_tools import evaluate_verdict
+from ..tools.weather import get_lightning_nowcast, get_weather
 from .serialize import tool_result_response
 
 
@@ -80,6 +83,9 @@ class QueryRequest(BaseModel):
     region_id: str | None = None
     surface: str = "boat"
     use_model: bool = True
+    #: PS bullet 3, multi-turn conversation. Omit on a first message; echo back
+    #: `QueryOutcome.session_id` on every follow-up in the same conversation.
+    session_id: str | None = None
 
 
 def _query_from(body: QueryRequest) -> Query:
@@ -98,6 +104,7 @@ def _query_from(body: QueryRequest) -> Query:
         region_id=body.region_id,
         surface="console" if body.surface == "console" else "boat",
         use_model=body.use_model,
+        session_id=body.session_id,
     )
 
 
@@ -330,6 +337,40 @@ def get_productive_waters(
 @router.get("/hazards")
 def get_hazards(bbox: str | None = None, when: str | None = None) -> dict[str, Any]:
     return tool_result_response(get_hazard_alerts(bbox=_parse_bbox(bbox), when=when))
+
+
+# ------------------------------------------------------------------------------------
+# GET /api/conditions?lat&lon&when — every raw source reading in one call, for the
+# console's "Data" tab: proof-of-work that FORESHORE is reading real sensors, not
+# narrating. Calls the same read-only tools a specialist would (get_sea_state, get_tide,
+# get_currents, get_weather, get_lightning_nowcast) directly — no planner, no verdict, no
+# ceiling, no model call — so a judge can see the actual retrieved Observations (source,
+# authority, acquisition time, resolution) behind every number the console shows, without
+# paying for a full agent turn. Every tool here is documented "never raises" (see each
+# module), so this needs no per-call try/except; a source outage still returns
+# `ok=True, partial=True` with a named `missing` entry, never a 500.
+# ------------------------------------------------------------------------------------
+
+
+@router.get("/conditions")
+def get_conditions(lat: float, lon: float, when: str | None = None) -> dict[str, Any]:
+    sections = [
+        {"key": "sea_state", "label": "Sea state", **tool_result_response(get_sea_state(lat=lat, lon=lon, when=when))},
+        {"key": "tide", "label": "Tide", **tool_result_response(get_tide(lat=lat, lon=lon))},
+        {"key": "currents", "label": "Currents", **tool_result_response(get_currents(lat=lat, lon=lon, when=when))},
+        {"key": "weather", "label": "Wind & weather", **tool_result_response(get_weather(lat=lat, lon=lon, when=when))},
+        {
+            "key": "lightning",
+            "label": "Lightning nowcast",
+            **tool_result_response(get_lightning_nowcast(lat=lat, lon=lon)),
+        },
+    ]
+    return {
+        "lat": lat,
+        "lon": lon,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sections": sections,
+    }
 
 
 __all__ = ["router"]
