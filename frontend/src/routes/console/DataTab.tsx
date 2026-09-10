@@ -63,9 +63,33 @@ function ObservationRow({ o }: { o: Observation }) {
   );
 }
 
+/** A source like tide (`GET /api/conditions`'s `openmeteo_marine` adapter) reports one
+ *  reading per hour up to two days out — 24-48 rows of the same variable/source/freshness
+ *  repeated back to back, which read as a wall of near-identical noise rather than a
+ *  reading. Everything else in `sections` (sea state, weather, lightning) already comes
+ *  back as a handful of distinct variables, so this only ever fires on an hourly series:
+ *  sorted by `valid_time` (nearest-future first) and capped to 5 by default, with a
+ *  `<details>` to reach the rest — the full series is still there, never dropped, just
+ *  not dumped on screen at once. */
+const DEFAULT_ROWS_SHOWN = 5;
+
+function sortedByValidTime(observations: Observation[]): Observation[] {
+  return [...observations].sort((a, b) => {
+    const av = Date.parse(a.valid_time ?? "");
+    const bv = Date.parse(b.valid_time ?? "");
+    if (Number.isNaN(av) || Number.isNaN(bv)) return 0;
+    return av - bv;
+  });
+}
+
 function SectionCard({ section }: { section: ConditionsPayload["sections"][number] }) {
   const statusLabel = !section.ok ? "Unavailable" : section.partial ? "Partial" : "OK";
   const statusTone = !section.ok ? "stop" : section.partial ? "caution" : "go";
+  const observations = sortedByValidTime(section.observations);
+  const overflow = observations.length > DEFAULT_ROWS_SHOWN;
+  const shown = overflow ? observations.slice(0, DEFAULT_ROWS_SHOWN) : observations;
+  const rest = overflow ? observations.slice(DEFAULT_ROWS_SHOWN) : [];
+
   return (
     <article className="data-card">
       <header className="data-card__head">
@@ -73,11 +97,21 @@ function SectionCard({ section }: { section: ConditionsPayload["sections"][numbe
         <span className={`data-card__status data-card__status--${statusTone}`}>{statusLabel}</span>
       </header>
       {section.summary && <p className="data-card__summary">{section.summary}</p>}
-      {section.observations.length > 0 ? (
+      {observations.length > 0 ? (
         <div className="data-card__obs">
-          {section.observations.map((o, i) => (
+          {shown.map((o, i) => (
             <ObservationRow key={`${o.variable}-${i}`} o={o} />
           ))}
+          {overflow && (
+            <details className="data-card__more">
+              <summary>{rest.length} more reading{rest.length === 1 ? "" : "s"} from this source</summary>
+              <div className="data-card__obs">
+                {rest.map((o, i) => (
+                  <ObservationRow key={`${o.variable}-rest-${i}`} o={o} />
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       ) : (
         <p className="empty-note">No reading available for this source right now.</p>

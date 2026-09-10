@@ -430,6 +430,40 @@
   gap: 10px;
 }
 
+/* An hourly-series source (tide) caps to 5 rows by default — see DataTab.tsx's
+   `sortedByValidTime`/`DEFAULT_ROWS_SHOWN` — with the rest reachable here. Same
+   disclosure convention as .evidence-details. */
+.data-card__more {
+  margin-top: 4px;
+}
+
+.data-card__more > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--marine-on-surface-variant);
+  list-style: none;
+  padding: 4px 0;
+}
+
+.data-card__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.data-card__more > summary::before {
+  content: "▸ ";
+}
+
+.data-card__more[open] > summary::before {
+  content: "▾ ";
+}
+
+.data-card__more .data-card__obs {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .data-obs-row {
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);

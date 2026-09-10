@@ -299,6 +299,18 @@ export default function BoatApp() {
       </header>
 
       <main className="boat-app__main">
+        {/* Push-path alerts (console broadcast, geofence/hazard/weather) must be visible
+            the instant they arrive regardless of which tab is open — this used to live
+            only inside the Map tab panel, so a CRITICAL alert pushed while the fisherman
+            was on Ask/Evidence rendered nowhere until they happened to switch tabs. */}
+        <div className="boat-app__alert-slot">
+          <AlertBanner
+            alerts={[...pushAlerts, ...proximity.alerts]}
+            offline={offline}
+            hasData={proximity.hasData || pushAlerts.length > 0}
+          />
+        </div>
+
         {/* ── Ask Tab ──────────────────────────────────────── */}
         <div className={`boat-tab-panel${activeTab === "ask" ? " boat-tab-panel--active" : ""}`}>
           {activeOutcome?.scenario ? (
@@ -336,15 +348,15 @@ export default function BoatApp() {
               }
             />
             {queryError ? <div className="ask-section__error">{queryError}</div> : null}
+            {/* The verdict card above already renders the full answer — level, reason,
+                the "Why" disclosure and the contact/handoff block. Echoing the question
+                is still useful context; echoing outcome.text again underneath was a
+                verbatim repeat of what the card just showed. */}
             {!offline && lastQuestion && activeOutcome ? (
               <div className="ask-section__transcript">
                 <div className="ask-section__turn">
                   <div className="ask-section__turn-label">You asked</div>
                   <div className="ask-section__question">{lastQuestion}</div>
-                </div>
-                <div className="ask-section__turn">
-                  <div className="ask-section__turn-label">FORESHORE</div>
-                  <div className="ask-section__answer">{activeOutcome.text}</div>
                 </div>
               </div>
             ) : null}
@@ -353,12 +365,6 @@ export default function BoatApp() {
 
         {/* ── Map Tab ──────────────────────────────────────── */}
         <div className={`boat-tab-panel${activeTab === "map" ? " boat-tab-panel--active" : ""}`}>
-          <AlertBanner
-            alerts={[...pushAlerts, ...proximity.alerts]}
-            offline={offline}
-            hasData={proximity.hasData || pushAlerts.length > 0}
-          />
-
           <MapView
             region={region}
             position={position}

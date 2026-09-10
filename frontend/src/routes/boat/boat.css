@@ -80,6 +80,21 @@
   animation: fadeIn 0.3s var(--ease-out) both;
 }
 
+/* Sits above the tab panels (see BoatApp.tsx) so a push alert is visible on every
+   tab, not just Map — same width/gutter as a tab panel's own content so it lines
+   up visually with whichever one is active, minus the display-none toggle since
+   this is never hidden. */
+.boat-app__alert-slot {
+  padding: 16px 16px 0;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.boat-app__alert-slot:empty {
+  display: none;
+}
+
 .boat-tab-panel--active {
   display: flex;
 }
