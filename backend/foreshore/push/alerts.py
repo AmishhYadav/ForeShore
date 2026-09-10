@@ -15,6 +15,7 @@ severity ordering has exactly one definition in the codebase.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from ..geofence.classes import ALERT_RANK
@@ -38,10 +39,15 @@ class AlertStore:
 
         - No active alert for this key yet -> store and return it (new emission).
         - An active alert exists and ``alert.level`` outranks it (:data:`ALERT_RANK`) ->
-          escalation: replace and return it. Escalations are always re-emitted.
+          escalation: replace (new ``alert_id``, since it is a fresh emission on the wire)
+          and return it. Escalations are always re-emitted.
         - An active alert exists at the same or a lower rank -> suppress: the stored
-          record's fields are still refreshed to ``alert``'s (so distance/eta stay
-          current), but ``None`` is returned — nothing new was emitted.
+          record's fields are refreshed to ``alert``'s (so distance/eta stay current),
+          *but keep the existing ``alert_id``/``created_at``* — a caller (the console's
+          Ack button) may be holding that id from a `GET /api/alerts` several ticks ago,
+          and a tick-over-tick identity churn on an otherwise-unchanged alert turns every
+          Ack into a race against the next tick. ``None`` is returned — nothing new was
+          emitted.
 
         Every call, regardless of which branch it takes, also appends to the bounded
         history log (see :meth:`history`) — a suppressed duplicate still happened.
@@ -56,9 +62,11 @@ class AlertStore:
             self._record_history(alert)
             return alert
         # Same or lower rank: refresh the stored fields (fresh distance/eta reach
-        # callers of active_for_vessel/all_active) but this is not a new emission.
-        self._active[alert.dedupe_key] = alert
-        self._record_history(alert)
+        # callers of active_for_vessel/all_active) but keep the id stable — not a new
+        # emission, and not a new identity either.
+        refreshed = replace(alert, alert_id=existing.alert_id, created_at=existing.created_at)
+        self._active[alert.dedupe_key] = refreshed
+        self._record_history(refreshed)
         return None
 
     def _record_history(self, alert: Alert) -> None:

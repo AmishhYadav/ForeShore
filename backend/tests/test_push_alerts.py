@@ -69,7 +69,10 @@ def test_upsert_identical_level_duplicate_is_suppressed_but_refreshes_fields():
     active = store.active_for_vessel("sim-00")
     assert len(active) == 1
     assert active[0].distance_nm == 1.2
-    assert active[0].alert_id == "a2"
+    # Identity stays the *first* alert's — a caller (the console's Ack button) may be
+    # holding this id from several ticks ago, and a still-open, non-escalating alert
+    # must not churn its id out from under an in-flight Ack.
+    assert active[0].alert_id == "a1"
 
 
 def test_upsert_escalation_always_re_emits():
